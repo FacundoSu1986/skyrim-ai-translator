@@ -41,9 +41,9 @@ def parse_strings_file(filepath: str) -> list[StringEntry]:
             StringEntry(
                 form_id=item["FormID"],
                 text=item["Text"],
-                is_dialog=item.get("IsDialog", False),
-                actor=item.get("Actor"),
-                voice_type=item.get("VoiceType")
+                is_dialog=item.get("IsDialog", item.get("is_dialog", False)),
+                actor=item.get("Actor", item.get("actor")),
+                voice_type=item.get("VoiceType", item.get("voice_type"))
             )
         )
 

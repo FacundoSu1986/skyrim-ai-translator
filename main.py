@@ -8,9 +8,10 @@ from src.dsd_exporter import export_to_dsd
 
 async def main():
     # Setup test paths
+    plugin_name = "Skyrim.esm"
     input_file = Path("test_input.json")
-    output_dsd = Path("output/dsd/translated_strings.json")
-    output_voice_dir = Path("output/Sound/Voice/Skyrim.esm")
+    output_dsd = Path(f"output/dsd/{plugin_name}.json")
+    output_voice_dir = Path(f"output/Sound/Voice/{plugin_name}")
 
     # Mock Input Data
     input_file.write_text("""[
@@ -33,9 +34,12 @@ async def main():
             Path(filepath).parent.mkdir(parents=True, exist_ok=True)
             Path(filepath).write_text("dummy mp3 data")
             
-    for entry in translated_entries:
-        if entry.is_dialog:
-            await generate_voice_file(entry, str(output_voice_dir), tts_class=MockCommunicate)
+    tasks = [
+        generate_voice_file(entry, str(output_voice_dir), tts_class=MockCommunicate)
+        for entry in translated_entries
+        if entry.is_dialog
+    ]
+    await asyncio.gather(*tasks)
 
     print("4. Exporting to DSD JSON...")
     export_to_dsd(translated_entries, str(output_dsd))

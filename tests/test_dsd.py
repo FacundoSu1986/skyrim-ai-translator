@@ -40,6 +40,30 @@ def test_export_to_dsd_omits_none_translations(tmp_path: Path):
     assert "0x02" not in content
 
 
+def test_export_to_dsd_omits_empty_and_whitespace_translations(tmp_path: Path):
+    output_file = tmp_path / "dsd_empty_omitted.json"
+    entries = [
+        StringEntry(form_id="0x01", text="Sword", translated_text="Espada"),
+        StringEntry(form_id="0x02", text="Shield", translated_text=None),
+        StringEntry(form_id="0x03", text="Bow", translated_text=""),
+        StringEntry(form_id="0x04", text="Axe", translated_text="   "),
+        StringEntry(form_id="0x05", text="Staff", translated_text="\t\n"),
+    ]
+
+    export_to_dsd(entries, output_file)
+
+    assert output_file.exists()
+    content = json.loads(output_file.read_text(encoding="utf-8"))
+    assert content == {
+        "0x01": "Espada",
+    }
+    assert "0x02" not in content
+    assert "0x03" not in content
+    assert "0x04" not in content
+    assert "0x05" not in content
+
+
+
 def test_export_to_dsd_json_formatting_and_utf8(tmp_path: Path):
     output_file = tmp_path / "dsd_formatted.json"
     entries = [

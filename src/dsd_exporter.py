@@ -17,7 +17,7 @@ def export_to_dsd(entries: list[StringEntry], output_file: Union[str, Path]) -> 
     dsd_data = {
         entry.form_id: entry.translated_text
         for entry in entries
-        if entry.translated_text is not None
+        if entry.translated_text is not None and entry.translated_text.strip() != ""
     }
 
     with out_path.open("w", encoding="utf-8") as f:
