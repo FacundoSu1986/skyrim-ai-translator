@@ -25,6 +25,8 @@ async def generate_voice_file(
         
     try:
         out_path = Path(output_dir)
+        if entry.voice_type:
+            out_path = out_path / entry.voice_type
         out_path.mkdir(parents=True, exist_ok=True)
         file_path = out_path / f"{entry.form_id}.mp3"
         

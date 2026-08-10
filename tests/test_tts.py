@@ -73,3 +73,32 @@ async def test_generate_voice_file_exception(tmp_path):
     expected_file = out_dir / f"{entry.form_id}.mp3"
     assert not expected_file.exists()
 
+
+@pytest.mark.asyncio
+async def test_generate_voice_file_with_voice_type(tmp_path):
+    out_dir = tmp_path / "Sound"
+    entry = StringEntry(
+        form_id="0005",
+        text="Stop right there!",
+        translated_text="¡Alto ahí!",
+        is_dialog=True,
+        voice_type="MaleGuard"
+    )
+    
+    class MockCommunicate:
+        def __init__(self, text, voice):
+            self.text = text
+            self.voice = voice
+
+        async def save(self, filepath):
+            Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+            Path(filepath).write_text("audio data")
+            
+    success = await generate_voice_file(entry, str(out_dir), "es-ES-AlvaroNeural", tts_class=MockCommunicate)
+    
+    assert success is True
+    expected_file = out_dir / "MaleGuard" / f"{entry.form_id}.mp3"
+    assert expected_file.exists()
+    assert expected_file.read_text() == "audio data"
+
+
