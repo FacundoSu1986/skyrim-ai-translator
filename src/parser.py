@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from src.models import StringEntry
 
@@ -13,7 +14,7 @@ def parse_strings_file(filepath: str) -> list[StringEntry]:
         
     Raises:
         FileNotFoundError: If the file does not exist.
-        ValueError: If JSON structure is invalid, not a list, or missing mandatory keys.
+        ValueError: If JSON structure is invalid or root is not a list.
     """
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"File not found: {filepath}")
@@ -27,19 +28,25 @@ def parse_strings_file(filepath: str) -> list[StringEntry]:
     if not isinstance(data, list):
         raise ValueError(f"Invalid JSON format in '{filepath}': expected a list, got {type(data).__name__}")
 
+    entries = []
     for i, item in enumerate(data):
         if not isinstance(item, dict):
-            raise ValueError(f"Invalid entry at index {i} in '{filepath}': expected dict, got {type(item).__name__}")
+            logging.warning(f"Skipping invalid entry at index {i} in '{filepath}': expected dict, got {type(item).__name__}")
+            continue
         if "FormID" not in item or "Text" not in item:
-            raise ValueError(f"Missing mandatory key ('FormID' or 'Text') at index {i} in '{filepath}': {item}")
+            logging.warning(f"Skipping invalid entry at index {i} in '{filepath}': missing mandatory key ('FormID' or 'Text') in {item}")
+            continue
 
-    return [
-        StringEntry(
-            form_id=item["FormID"],
-            text=item["Text"],
-            is_dialog=item.get("IsDialog", False),
-            actor=item.get("Actor")
+        entries.append(
+            StringEntry(
+                form_id=item["FormID"],
+                text=item["Text"],
+                is_dialog=item.get("IsDialog", False),
+                actor=item.get("Actor"),
+                voice_type=item.get("VoiceType")
+            )
         )
-        for item in data
-    ]
+
+    return entries
+
 

@@ -1,4 +1,5 @@
 import json
+import logging
 import pytest
 from pathlib import Path
 from src.models import StringEntry
@@ -7,7 +8,13 @@ from src.parser import parse_strings_file
 def test_parse_strings_file(tmp_path):
     # Setup mock data
     mock_data = [
-        {"FormID": "00012345", "Text": "Hello there", "IsDialog": True, "Actor": "Guard"}
+        {
+            "FormID": "00012345",
+            "Text": "Hello there",
+            "IsDialog": True,
+            "Actor": "Guard",
+            "VoiceType": "MaleUnique"
+        }
     ]
     file_path = tmp_path / "strings.json"
     file_path.write_text(json.dumps(mock_data))
@@ -22,6 +29,7 @@ def test_parse_strings_file(tmp_path):
     assert result[0].text == "Hello there"
     assert result[0].is_dialog is True
     assert result[0].actor == "Guard"
+    assert result[0].voice_type == "MaleUnique"
 
 def test_parse_strings_file_defaults(tmp_path):
     # Setup mock data without optional fields
@@ -41,6 +49,7 @@ def test_parse_strings_file_defaults(tmp_path):
     assert result[0].is_dialog is False
     assert result[0].actor is None
     assert result[0].translated_text is None
+    assert result[0].voice_type is None
 
 def test_parse_strings_file_empty_list(tmp_path):
     file_path = tmp_path / "empty.json"
@@ -67,27 +76,26 @@ def test_parse_strings_file_not_a_list(tmp_path):
     with pytest.raises(ValueError, match="expected a list"):
         parse_strings_file(str(file_path))
 
-def test_parse_strings_file_missing_form_id(tmp_path):
-    mock_data = [{"Text": "No FormID"}]
-    file_path = tmp_path / "missing_form_id.json"
+def test_parse_strings_file_skips_malformed_entries(tmp_path, caplog):
+    mock_data = [
+        {"Text": "Missing FormID"},
+        {"FormID": "00011111", "Text": "Good Entry 1", "VoiceType": "MaleNord"},
+        "not_a_dictionary",
+        {"FormID": "00022222"},  # Missing Text
+        {"FormID": "00033333", "Text": "Good Entry 2"}
+    ]
+    file_path = tmp_path / "mixed_entries.json"
     file_path.write_text(json.dumps(mock_data))
     
-    with pytest.raises(ValueError, match="Missing mandatory key"):
-        parse_strings_file(str(file_path))
+    with caplog.at_level(logging.WARNING):
+        result = parse_strings_file(str(file_path))
+        
+    assert len(result) == 2
+    assert result[0].form_id == "00011111"
+    assert result[0].text == "Good Entry 1"
+    assert result[0].voice_type == "MaleNord"
+    assert result[1].form_id == "00033333"
+    assert result[1].text == "Good Entry 2"
+    assert len(caplog.records) == 3
 
-def test_parse_strings_file_missing_text(tmp_path):
-    mock_data = [{"FormID": "00012345"}]
-    file_path = tmp_path / "missing_text.json"
-    file_path.write_text(json.dumps(mock_data))
-    
-    with pytest.raises(ValueError, match="Missing mandatory key"):
-        parse_strings_file(str(file_path))
-
-def test_parse_strings_file_invalid_item_type(tmp_path):
-    mock_data = ["not_a_dict"]
-    file_path = tmp_path / "invalid_item.json"
-    file_path.write_text(json.dumps(mock_data))
-    
-    with pytest.raises(ValueError, match="expected dict"):
-        parse_strings_file(str(file_path))
 

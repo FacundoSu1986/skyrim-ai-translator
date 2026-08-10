@@ -8,3 +8,5 @@ class StringEntry:
     is_dialog: bool = False
     actor: Optional[str] = None
     translated_text: Optional[str] = None
+    voice_type: Optional[str] = None
+
