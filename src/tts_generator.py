@@ -1,10 +1,13 @@
-import os
+import logging
+from pathlib import Path
 import edge_tts
 from src.models import StringEntry
 
+logger = logging.getLogger(__name__)
+
 async def generate_voice_file(
     entry: StringEntry,
-    output_dir: str,
+    output_dir: str | Path,
     voice: str = "es-ES-AlvaroNeural",
     tts_class=edge_tts.Communicate
 ) -> bool:
@@ -20,9 +23,15 @@ async def generate_voice_file(
     if not entry.is_dialog or not entry.translated_text:
         return False
         
-    os.makedirs(output_dir, exist_ok=True)
-    file_path = os.path.join(output_dir, f"{entry.form_id}.wav")
-    
-    communicate = tts_class(entry.translated_text, voice)
-    await communicate.save(file_path)
-    return True
+    try:
+        out_path = Path(output_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        file_path = out_path / f"{entry.form_id}.mp3"
+        
+        communicate = tts_class(entry.translated_text, voice)
+        await communicate.save(str(file_path))
+        return True
+    except Exception as e:
+        logger.error(f"Error generating voice file for entry {entry.form_id}: {e}")
+        return False
+

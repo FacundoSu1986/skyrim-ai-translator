@@ -21,7 +21,7 @@ async def test_generate_voice_file(tmp_path):
     success = await generate_voice_file(entry, str(out_dir), "es-ES-AlvaroNeural", tts_class=MockCommunicate)
     
     assert success is True
-    expected_file = out_dir / f"{entry.form_id}.wav"
+    expected_file = out_dir / f"{entry.form_id}.mp3"
     assert expected_file.exists()
     assert expected_file.read_text() == "audio data"
 
@@ -38,7 +38,7 @@ async def test_generate_voice_file_not_dialog(tmp_path):
 
     success = await generate_voice_file(entry, str(out_dir), "es-ES-AlvaroNeural", tts_class=MockCommunicate)
     assert success is False
-    expected_file = out_dir / f"{entry.form_id}.wav"
+    expected_file = out_dir / f"{entry.form_id}.mp3"
     assert not expected_file.exists()
 
 @pytest.mark.asyncio
@@ -54,5 +54,22 @@ async def test_generate_voice_file_no_translation(tmp_path):
 
     success = await generate_voice_file(entry, str(out_dir), "es-ES-AlvaroNeural", tts_class=MockCommunicate)
     assert success is False
-    expected_file = out_dir / f"{entry.form_id}.wav"
+    expected_file = out_dir / f"{entry.form_id}.mp3"
     assert not expected_file.exists()
+
+@pytest.mark.asyncio
+async def test_generate_voice_file_exception(tmp_path):
+    out_dir = tmp_path / "Sound"
+    entry = StringEntry(form_id="0004", text="Hello", translated_text="Hola", is_dialog=True)
+    
+    class FailingMockCommunicate:
+        def __init__(self, text, voice):
+            pass
+        async def save(self, filepath):
+            raise RuntimeError("Network failure or rate limiting")
+
+    success = await generate_voice_file(entry, str(out_dir), "es-ES-AlvaroNeural", tts_class=FailingMockCommunicate)
+    assert success is False
+    expected_file = out_dir / f"{entry.form_id}.mp3"
+    assert not expected_file.exists()
+
