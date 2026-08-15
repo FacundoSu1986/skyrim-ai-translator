@@ -1,8 +1,9 @@
 import struct
 import zlib
 import logging
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator, List, Tuple
+from typing import List, Tuple
 from src.models import StringEntry
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,7 @@ def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, str, bytes]]:
                 try:
                     body = zlib.decompress(body[4:], bufsize=decompressed_size)
                 except Exception as err:
-                    logger.error(f"Error decompressing record {form_id_hex} ({tag}): {err}")
+                    logger.error("Error decompressing record %s (%s): %s", form_id_hex, tag, err)
                     body = b""
             else:
                 body = b""
@@ -121,7 +122,7 @@ def parse_esp_file(filepath: str | Path) -> List[StringEntry]:
     # Pass 1: build FormID -> EditorID map so VTCK voice references can be
     # resolved to real voice type names (e.g. "MaleNord", "FemaleCommander")
     formid_to_edid: dict[str, str] = {}
-    for tag, _flags, form_id_hex, body in _iter_records(data):
+    for _tag, _flags, form_id_hex, body in _iter_records(data):
         for s_type, payload in _read_subrecords(body):
             if s_type == b"EDID" and payload:
                 edid = _decode_string(payload).strip()

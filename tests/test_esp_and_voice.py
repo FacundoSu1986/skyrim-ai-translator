@@ -23,6 +23,18 @@ def test_free_translator_glossary():
     assert "Sangre de Dragón" in result or "Dragonborn" in result
     assert "Carrera Blanca" in result or "Whiterun" in result
 
+def test_free_translator_target_lang_and_placeholders():
+    from src.free_translator import _protect_glossary, _restore_glossary, _resolve_lang_code
+    assert _resolve_lang_code("french") == "fr"
+    assert _resolve_lang_code("German") == "de"
+    assert _resolve_lang_code("unknown_lang") == "es"
+
+    # Verify case-insensitive restoration
+    text = "El __sky_0__ camina hacia __sKy_1__."
+    replacements = {"__SKY_0__": "Sangre de Dragón", "__SKY_1__": "Carrera Blanca"}
+    restored = _restore_glossary(text, replacements)
+    assert restored == "El Sangre de Dragón camina hacia Carrera Blanca."
+
 def test_esp_parser_synthetic(tmp_path):
     # Construct a minimal valid Skyrim 24-byte header TES4 .esp file with an INFO record and NAM1 subrecord
     esp_path = tmp_path / "TestPlugin.esp"

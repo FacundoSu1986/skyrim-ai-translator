@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -7,7 +8,7 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, WebSocket, Query, Body, HTTPException
+from fastapi import FastAPI, UploadFile, File, WebSocket, Query, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -22,20 +23,40 @@ from src.translator import translate_entries, create_openai_compatible_translato
 from src.tts_generator import generate_voice_file
 from src.dsd_exporter import export_to_dsd
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Skyrim AI Translation Agent API")
 
-# CORS: credentials only make sense with explicit origins, never with a wildcard.
-_cors_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()]
+# CORS: allow development hosts by default or custom origins from CORS_ORIGINS
+_default_cors = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+_cors_raw = os.environ.get("CORS_ORIGINS")
+_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()] if _cors_raw else _default_cors
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=_cors_origins != ["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# In-memory storage for translation jobs
+# In-memory storage for translation jobs and locks per mod
 jobs = {}
+_mod_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_mod_lock(mod_name: str) -> asyncio.Lock:
+    """Returns an asyncio.Lock dedicated to the specified mod name."""
+    if mod_name not in _mod_locks:
+        _mod_locks[mod_name] = asyncio.Lock()
+    return _mod_locks[mod_name]
 
 
 def _sanitize_name(name: str) -> str:
@@ -57,12 +78,20 @@ def _copy_build_to_dir(build_dir: Path, target_dir: Path) -> None:
 
 
 def _zip_dir(build_dir: Path, zip_path: Path) -> None:
+    """Creates a zip archive containing all files under build_dir."""
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, _, files in os.walk(build_dir):
             for file in files:
                 file_full_path = Path(root) / file
                 arcname = file_full_path.relative_to(build_dir)
                 zipf.write(file_full_path, arcname)
+
+
+def _save_upload_file(upload_file: UploadFile, dest_path: Path) -> None:
+    """Saves uploaded file chunks to disk synchronously in a worker thread."""
+    with open(dest_path, "wb") as f:
+        shutil.copyfileobj(upload_file.file, f)
+
 
 AVAILABLE_VOICES = [
     {"id": "es-ES-AlvaroNeural", "name": "Álvaro (Español España - Masculino)", "lang": "es-ES"},
@@ -175,15 +204,14 @@ async def upload_json(
 
     safe_name = _sanitize_name(file.filename or "upload.dat")
     file_path = upload_dir / safe_name
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    await asyncio.to_thread(_save_upload_file, file, file_path)
 
     cfg = {}
     if config:
         try:
             cfg = json.loads(config)
-        except Exception:
-            pass
+        except Exception as err:
+            logger.warning("JSON de configuración de subida no válido: %s", err)
 
     plugin_name = safe_name
     for ext in [".json", ".esp", ".esm", ".esl"]:
@@ -214,21 +242,25 @@ async def start_mo2_translation(req: MO2TranslateRequest):
     upload_dir = Path(f"output/jobs/{job_id}")
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Search for existing JSON (recursive glob already includes root level)
-    json_files = sorted(set(mod_dir.glob("**/*.json")))
-
-    # 2. Search for real Skyrim .esp, .esm, .esl plugins
+    # 1. Search for real Skyrim .esp, .esm, .esl plugins first
     esp_files = sorted(mod_dir.glob("*.esp")) + sorted(mod_dir.glob("*.esm")) + sorted(mod_dir.glob("*.esl"))
 
+    # 2. Search for candidate JSON files, excluding generated DSD output to avoid re-translation loops
+    candidate_jsons = [
+        p for p in mod_dir.glob("**/*.json")
+        if "SKSE" not in p.parts and "DSD" not in p.parts
+    ]
+    json_files = sorted(set(candidate_jsons))
+
     plugin_file_name = mod_name
-    if json_files:
-        target_file = json_files[0]
-        file_path = upload_dir / target_file.name
-        shutil.copy(target_file, file_path)
-    elif esp_files:
-        # Native ESP file found! Copy it for binary parsing
+    if esp_files:
+        # Native ESP plugin found: prioritize binary parsing for authentic game data
         target_file = esp_files[0]
         plugin_file_name = target_file.stem
+        file_path = upload_dir / target_file.name
+        shutil.copy(target_file, file_path)
+    elif json_files:
+        target_file = json_files[0]
         file_path = upload_dir / target_file.name
         shutil.copy(target_file, file_path)
     else:
@@ -341,12 +373,14 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             voice_base_dir.mkdir(parents=True, exist_ok=True)
 
             success_count = 0
+            completed_count = 0
             tts_semaphore = asyncio.Semaphore(5)
+            progress_lock = asyncio.Lock()
             total = len(dialog_entries)
             log_every = max(1, total // 5)
 
-            async def _gen_voice(idx_entry):
-                idx, entry = idx_entry
+            async def _gen_voice(entry):
+                nonlocal success_count, completed_count
                 assigned_voice = resolve_voice_for_entry(entry.voice_type, default_fallback=default_voice)
                 async with tts_semaphore:
                     ok = await generate_voice_file(
@@ -355,15 +389,16 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                         voice=assigned_voice,
                         tts_class=edge_tts.Communicate
                     )
-                if ok:
-                    nonlocal success_count
-                    success_count += 1
-                curr_progress = 65 + int((idx + 1) / total * 20)
-                if idx % log_every == 0 or idx == total - 1:
-                    voice_label = assigned_voice.split("-")[2] if assigned_voice.count("-") >= 2 else assigned_voice
-                    await log_msg(f"🔊 [{voice_label}] Diálogo {idx+1}/{total} generado...", curr_progress, "audio")
+                async with progress_lock:
+                    if ok:
+                        success_count += 1
+                    completed_count += 1
+                    curr_progress = 65 + int(completed_count / total * 20)
+                    if completed_count % log_every == 0 or completed_count == total:
+                        voice_label = assigned_voice.split("-")[2] if assigned_voice.count("-") >= 2 else assigned_voice
+                        await log_msg(f"🔊 [{voice_label}] Diálogo {completed_count}/{total} generado...", curr_progress, "audio")
 
-            await asyncio.gather(*[_gen_voice(pair) for pair in enumerate(dialog_entries)])
+            await asyncio.gather(*[_gen_voice(entry) for entry in dialog_entries])
 
             await log_msg(f"✅ {success_count} archivos de voz neuronal organizados por VoiceType.", 85, "success")
         else:
@@ -380,7 +415,8 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             target_mod_dir = Path(job["mo2_path"]) / job["mod_name"]
             if target_mod_dir.is_dir():
                 await log_msg(f"🚀 Auto-inyectando directamente en '{job['mod_name']}'...", 95, "success")
-                await asyncio.to_thread(_copy_build_to_dir, build_dir, target_mod_dir)
+                async with _get_mod_lock(job["mod_name"]):
+                    await asyncio.to_thread(_copy_build_to_dir, build_dir, target_mod_dir)
                 await log_msg("✅ ¡Mod inyectado automáticamente! Listo para jugar en Skyrim.", 98, "success")
 
         # 6. Build ZIP bundle
@@ -398,7 +434,8 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         })
 
     except Exception as e:
-        job["status"] = "failed"
+        job["status"] = "error"
+        logger.exception("Error crítico en pipeline de traducción para %s: %s", job_id, e)
         await log_msg(f"❌ ERROR CRÍTICO: {str(e)}", 100, "error")
 
     await websocket.close()
@@ -439,10 +476,11 @@ async def inject_to_mo2(job_id: str, req: InjectRequest):
         raise HTTPException(status_code=404, detail="Carpeta del mod en MO2 no encontrada")
 
     try:
-        await asyncio.to_thread(_copy_build_to_dir, build_dir, target_mod_dir)
+        async with _get_mod_lock(mod_name):
+            await asyncio.to_thread(_copy_build_to_dir, build_dir, target_mod_dir)
         return {
             "success": True,
             "message": f"¡Traducción inyectada con éxito en {target_mod_dir}!"
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error inyectando en MO2: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error inyectando en MO2: {str(e)}") from e

@@ -4,32 +4,46 @@ import logging
 import re
 import urllib.parse
 import urllib.request
+from typing import Awaitable, Callable
 from src.translator import SKYRIM_GLOSSARY
 
 logger = logging.getLogger(__name__)
 
+# Sort glossary keys by length descending to match composite terms before single words
+_SORTED_GLOSSARY = sorted(SKYRIM_GLOSSARY.items(), key=lambda item: len(item[0]), reverse=True)
+
 # One combined regex per glossary term, built once: term -> placeholder
 _PLACEHOLDER_RE = {
     re.compile(re.escape(eng_term), re.IGNORECASE): f"__SKY_{i}__"
-    for i, eng_term in enumerate(SKYRIM_GLOSSARY)
+    for i, (eng_term, _) in enumerate(_SORTED_GLOSSARY)
 }
 _PLACEHOLDER_TO_ESP = {
-    f"__SKY_{i}__": esp_term for i, esp_term in enumerate(SKYRIM_GLOSSARY.values())
+    f"__SKY_{i}__": esp_term for i, (_, esp_term) in enumerate(_SORTED_GLOSSARY)
 }
 
 _LANGUAGE_CODES = {
     "spanish": "es",
     "espanol": "es",
+    "español": "es",
     "es": "es",
     "english": "en",
+    "ingles": "en",
+    "inglés": "en",
     "en": "en",
     "french": "fr",
+    "frances": "fr",
+    "francés": "fr",
     "fr": "fr",
     "german": "de",
+    "aleman": "de",
+    "alemán": "de",
     "de": "de",
     "italian": "it",
+    "italiano": "it",
     "it": "it",
     "portuguese": "pt",
+    "portugues": "pt",
+    "portugués": "pt",
     "pt": "pt",
 }
 
@@ -50,8 +64,9 @@ def _protect_glossary(text: str) -> tuple[str, dict[str, str]]:
 
 
 def _restore_glossary(text: str, replacements: dict[str, str]) -> str:
+    """Restores placeholders case-insensitively to handle translated casing variations."""
     for placeholder, esp_term in replacements.items():
-        text = text.replace(placeholder, esp_term)
+        text = re.sub(re.escape(placeholder), esp_term, text, flags=re.IGNORECASE)
     return text
 
 
@@ -84,6 +99,19 @@ def translate_free_text_sync(text: str, target_lang: str = "Spanish") -> str:
         raise RuntimeError(f"Fallo del traductor gratuito: {e}") from e
 
 
+def create_free_translator(target_lang: str = "Spanish") -> Callable[[str, str], Awaitable[str]]:
+    """Creates a callable with fixed target_lang for translate_entries."""
+    async def _call(text: str, context: str) -> str:
+        return await asyncio.to_thread(translate_free_text_sync, text, target_lang)
+    return _call
+
+
 async def free_translator_callable(text: str, context: str) -> str:
-    """Async wrapper for the free neural translator."""
-    return await asyncio.to_thread(translate_free_text_sync, text, "Spanish")
+    """Async wrapper for the free neural translator with dynamic language extraction."""
+    target_lang = "Spanish"
+    if "Target language:" in context:
+        try:
+            target_lang = context.split("Target language:")[1].split(".")[0].strip()
+        except Exception:
+            target_lang = "Spanish"
+    return await asyncio.to_thread(translate_free_text_sync, text, target_lang)

@@ -8,10 +8,7 @@ import RitualLog from './components/RitualLog';
 import nordicCornerSvg from './assets/skyrim-ui/nordic-corner.svg';
 
 const API_ORIGIN = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const WS_ORIGIN = (import.meta.env.VITE_API_URL || 'ws://localhost:8000').replace(
-  /^http/,
-  'ws',
-);
+const WS_ORIGIN = API_ORIGIN.replace(/^http/, 'ws');
 
 function App() {
   const [activeTab, setActiveTab] = useState('mo2'); // 'mo2' | 'manual'
