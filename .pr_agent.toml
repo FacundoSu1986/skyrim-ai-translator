@@ -1,0 +1,16 @@
+[pr_reviewer]
+require_focused = true
+enable_help_text = false
+enable_auto_approval = false
+num_code_suggestions = 4
+extra_instructions = "Responde siempre en español. Mantén el foco en la consistencia de código Python (FastAPI, asyncio), componentes React y patrones de modding de Skyrim."
+
+[pr_description]
+publish_labels = true
+use_description_markers = false
+
+[config]
+model = "gpt-4o-mini"
+fallback_models = ["gpt-4o-mini"]
+ignore_pr_title = ["WIP", "draft", "test"]
+ignore_bot_pr = true
