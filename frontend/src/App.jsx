@@ -1,14 +1,71 @@
 import { useEffect, useRef, useState } from 'react';
-import DragonMedallion from './components/DragonMedallion';
-import RuneDivider from './components/RuneDivider';
-import ModSelector from './components/ModSelector';
-import SettingsPanel from './components/SettingsPanel';
-import TranslationProgress from './components/TranslationProgress';
-import RitualLog from './components/RitualLog';
-import nordicCornerSvg from './assets/skyrim-ui/nordic-corner.svg';
 
 const API_ORIGIN = 'http://localhost:8000';
 const WS_ORIGIN = 'ws://localhost:8000';
+
+function DragonSigil() {
+  return (
+    <svg
+      className="dragon-sigil"
+      viewBox="0 0 180 180"
+      role="img"
+      aria-label="Emblema de dragón nórdico"
+    >
+      <defs>
+        <linearGradient id="dragonMetal" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#eef4f8" />
+          <stop offset="35%" stopColor="#81909a" />
+          <stop offset="70%" stopColor="#d8b86a" />
+          <stop offset="100%" stopColor="#4d5962" />
+        </linearGradient>
+        <radialGradient id="dragonGlow">
+          <stop offset="0%" stopColor="#74d7ff" stopOpacity="0.9" />
+          <stop offset="100%" stopColor="#74d7ff" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+
+      <circle className="sigil-ring-outer" cx="90" cy="90" r="78" />
+      <circle className="sigil-ring-inner" cx="90" cy="90" r="66" />
+      <circle cx="90" cy="136" r="29" fill="url(#dragonGlow)" opacity="0.34" />
+
+      <g className="sigil-runes" aria-hidden="true">
+        <path d="M90 17v12M54 27l7 10M126 27l-7 10M28 54l10 7M152 54l-10 7M17 90h12M151 90h12M28 126l10-7M152 126l-10-7M54 152l7-10M126 152l-7-10" />
+      </g>
+
+      <path
+        fill="url(#dragonMetal)"
+        d="M118 38c-9 3-17 8-23 15-9-7-21-10-34-7 7 4 13 9 17 16-10 1-19 6-25 14 10-2 18-1 25 4-14 7-22 19-25 35 9-9 18-14 29-14-12 11-16 24-12 40 4-10 11-18 20-24 1 11-2 22-8 32 14-6 24-16 30-31 5-13 5-26 1-38 8-8 13-18 15-30-7 6-14 10-22 11 7-7 11-15 12-23Zm-28 29c11-8 22-10 34-6-7 2-13 6-18 11 5 2 10 6 13 11-11-3-21-1-30 5 2-8 2-15 1-21Z"
+      />
+      <path
+        className="sigil-eye"
+        d="M103 67l7 2-5 5-6-2 4-5Z"
+      />
+      <path
+        className="sigil-tail"
+        d="M91 102c-17 5-27 16-31 33 12-8 23-10 34-7-6 4-10 10-13 18 16-6 27-17 33-32"
+      />
+      <path className="sigil-rune-mark" d="M82 145l8-13 8 13-8 13-8-13Z" />
+    </svg>
+  );
+}
+
+function RuneDivider() {
+  return (
+    <div className="rune-divider" aria-hidden="true">
+      <span className="rune-line" />
+      <span className="rune-diamond">◇</span>
+      <span className="rune-knot">ᛟ</span>
+      <span className="rune-diamond">◇</span>
+      <span className="rune-line" />
+    </div>
+  );
+}
+
+function StatusGlyph({ status }) {
+  if (status === 'completed') return <span className="status-glyph success">✓</span>;
+  if (status === 'error') return <span className="status-glyph error">!</span>;
+  return <span className="status-glyph">ᚨ</span>;
+}
 
 function App() {
   const [activeTab, setActiveTab] = useState('mo2'); // 'mo2' | 'manual'
@@ -373,6 +430,13 @@ function App() {
     setInjectStatus(null);
   };
 
+  const progressLabel =
+    status === 'completed'
+      ? 'TRADUCCIÓN COMPLETADA'
+      : status === 'error'
+        ? 'RITUAL INTERRUMPIDO'
+        : 'FORJANDO TRADUCCIÓN...';
+
   const activeModName =
     activeTab === 'mo2'
       ? selectedMod || 'Ningún mod seleccionado'
@@ -380,34 +444,22 @@ function App() {
 
   return (
     <main className="page-shell">
-      {/* Ambient Side Smoke / Magic Mist */}
       <div className="ambient ambient-left" aria-hidden="true" />
       <div className="ambient ambient-right" aria-hidden="true" />
 
-      {/* Main Skyrim Artifact Frame */}
       <section className="skyrim-frame">
         <div className="frame-line frame-line-top" aria-hidden="true" />
         <div className="frame-line frame-line-bottom" aria-hidden="true" />
 
-        {/* 4 Nordic Corner Ornaments */}
-        <div className="corner-ornament corner-tl" aria-hidden="true">
-          <img src={nordicCornerSvg} alt="" />
-        </div>
-        <div className="corner-ornament corner-tr" aria-hidden="true">
-          <img src={nordicCornerSvg} alt="" />
-        </div>
-        <div className="corner-ornament corner-bl" aria-hidden="true">
-          <img src={nordicCornerSvg} alt="" />
-        </div>
-        <div className="corner-ornament corner-br" aria-hidden="true">
-          <img src={nordicCornerSvg} alt="" />
-        </div>
+        <span className="corner-ornament corner-tl" aria-hidden="true">ᛟ</span>
+        <span className="corner-ornament corner-tr" aria-hidden="true">ᛟ</span>
+        <span className="corner-ornament corner-bl" aria-hidden="true">ᛟ</span>
+        <span className="corner-ornament corner-br" aria-hidden="true">ᛟ</span>
 
         <div className="app-container">
-          {/* Header Hero */}
           <header className="hero">
             <div className="emblem-column">
-              <DragonMedallion />
+              <DragonSigil />
             </div>
 
             <div className="title-column">
@@ -426,8 +478,7 @@ function App() {
             </div>
           </header>
 
-          {/* Mode Navigation Tabs */}
-          <nav className="tabs-container" aria-label="Modo de entrada de traducción">
+          <nav className="tabs-container" aria-label="Modo de entrada">
             <button
               type="button"
               className={`tab-btn ${activeTab === 'mo2' ? 'active' : ''}`}
@@ -455,7 +506,6 @@ function App() {
             </button>
           </nav>
 
-          {/* Main Workspace Panel */}
           <section className="main-panel nordic-panel">
             {activeTab === 'mo2' ? (
               <div className="mo2-layout">
@@ -509,22 +559,38 @@ function App() {
                   </div>
 
                   <div className="input-group">
-                    <label id="mod-select-label" htmlFor="mod-select-button">
-                      Seleccionar Mod para Traducir
-                    </label>
+                    <label htmlFor="mod-select">Seleccionar Mod para Traducir</label>
 
-                    <ModSelector
-                      modsList={modsList}
-                      selectedMod={selectedMod}
-                      onSelectMod={setSelectedMod}
-                      disabled={isBusy}
-                    />
+                    {modsList.length > 0 ? (
+                      <div className="field-shell">
+                        <span className="field-icon sword-icon" aria-hidden="true">
+                          ⚔
+                        </span>
+                        <select
+                          id="mod-select"
+                          className="select-input select-skyrim"
+                          value={selectedMod}
+                          onChange={(event) => setSelectedMod(event.target.value)}
+                          disabled={isBusy}
+                        >
+                          {modsList.map((mod) => (
+                            <option key={mod} value={mod}>
+                              {mod}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="hint-box">
+                        No se encontraron mods. Introduce la ruta de MO2 y usa
+                        <strong> ESCANEAR</strong>.
+                      </div>
+                    )}
                   </div>
 
                   <label className="toggle-card">
                     <input
                       type="checkbox"
-                      className="visually-hidden"
                       checked={autoInject}
                       onChange={(event) => setAutoInject(event.target.checked)}
                       disabled={isBusy}
@@ -586,7 +652,6 @@ function App() {
                     }
                   }}
                   aria-disabled={isBusy}
-                  aria-label="Zona de carga de archivo JSON"
                 >
                   <input
                     type="file"
@@ -623,37 +688,258 @@ function App() {
             )}
           </section>
 
-          {/* Settings Section */}
-          <SettingsPanel
-            showSettings={showSettings}
-            onToggleSettings={() => setShowSettings((prev) => !prev)}
-            targetLang={targetLang}
-            onTargetLangChange={setTargetLang}
-            generateVoice={generateVoice}
-            onGenerateVoiceChange={setGenerateVoice}
-            voices={voices}
-            selectedVoice={selectedVoice}
-            onSelectedVoiceChange={setSelectedVoice}
-            aiProvider={aiProvider}
-            onAiProviderChange={setAiProvider}
-            apiKey={apiKey}
-            onApiKeyChange={handleApiKeyChange}
-            isBusy={isBusy}
-          />
+          <section className={`settings-section ${showSettings ? 'open' : ''}`}>
+            <button
+              type="button"
+              className="settings-toggle"
+              onClick={() => setShowSettings((value) => !value)}
+              aria-expanded={showSettings}
+            >
+              <span className="settings-title">
+                <span className="gear-mark" aria-hidden="true">⚙</span>
+                AJUSTES DE IDIOMA, VOCES E IA
+              </span>
+              <span className="settings-chevron" aria-hidden="true">
+                {showSettings ? '⌃' : '⌄'}
+              </span>
+            </button>
 
-          {/* Ritual In-Progress / Output Grid */}
+            {showSettings && (
+              <div className="settings-panel nordic-panel">
+                <div className="settings-grid">
+                  <div className="input-group">
+                    <label htmlFor="language-select">Idioma Destino</label>
+                    <div className="field-shell">
+                      <span className="field-icon" aria-hidden="true">◎</span>
+                      <select
+                        id="language-select"
+                        className="select-input"
+                        value={targetLang}
+                        onChange={(event) => setTargetLang(event.target.value)}
+                        disabled={isBusy}
+                      >
+                        <option value="Spanish">Español (España Oficial)</option>
+                        <option value="Spanish (Latin America)">
+                          Español (Latinoamérica)
+                        </option>
+                        <option value="French">Francés</option>
+                        <option value="German">Alemán</option>
+                        <option value="Italian">Italiano</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="input-group">
+                    <label htmlFor="voice-select">Voz Neuronal (Edge-TTS)</label>
+                    <div className="field-shell">
+                      <span className="field-icon" aria-hidden="true">♬</span>
+                      <select
+                        id="voice-select"
+                        className="select-input"
+                        value={selectedVoice}
+                        onChange={(event) =>
+                          setSelectedVoice(event.target.value)
+                        }
+                        disabled={!generateVoice || isBusy}
+                      >
+                        {voices.map((voice) => (
+                          <option key={voice.id} value={voice.id}>
+                            {voice.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <label className="voice-toggle">
+                    <input
+                      type="checkbox"
+                      checked={generateVoice}
+                      onChange={(event) =>
+                        setGenerateVoice(event.target.checked)
+                      }
+                      disabled={isBusy}
+                    />
+                    <span className="custom-check" aria-hidden="true" />
+                    <span>
+                      <strong>Generar archivos de voz</strong>
+                      <small>.mp3 para diálogos</small>
+                    </span>
+                  </label>
+
+                  <div className="provider-group">
+                    <span className="field-label">Proveedor de IA</span>
+
+                    <div className="provider-options">
+                      <label className="radio-option">
+                        <input
+                          type="radio"
+                          name="aiProvider"
+                          value="fast"
+                          checked={aiProvider === 'fast'}
+                          onChange={() => setAiProvider('fast')}
+                          disabled={isBusy}
+                        />
+                        <span className="radio-ui" />
+                        <span>
+                          <strong>Modo Rápido</strong>
+                          <small>Local</small>
+                        </span>
+                      </label>
+
+                      <label className="radio-option">
+                        <input
+                          type="radio"
+                          name="aiProvider"
+                          value="openai"
+                          checked={aiProvider === 'openai'}
+                          onChange={() => setAiProvider('openai')}
+                          disabled={isBusy}
+                        />
+                        <span className="radio-ui" />
+                        <span>
+                          <strong>OpenAI</strong>
+                          <small>gpt-4o-mini</small>
+                        </span>
+                      </label>
+
+                      <label className="radio-option">
+                        <input
+                          type="radio"
+                          name="aiProvider"
+                          value="deepseek"
+                          checked={aiProvider === 'deepseek'}
+                          onChange={() => setAiProvider('deepseek')}
+                          disabled={isBusy}
+                        />
+                        <span className="radio-ui" />
+                        <span>
+                          <strong>DeepSeek</strong>
+                          <small>deepseek-chat</small>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="input-group api-group">
+                    <label htmlFor="api-key">Clave API</label>
+                    <div className="field-shell">
+                      <span className="field-icon" aria-hidden="true">⌁</span>
+                      <input
+                        id="api-key"
+                        type="password"
+                        className="text-input"
+                        value={apiKey}
+                        onChange={(event) =>
+                          handleApiKeyChange(event.target.value)
+                        }
+                        placeholder={
+                          aiProvider === 'fast'
+                            ? 'No requerida en modo local'
+                            : 'sk-...'
+                        }
+                        disabled={aiProvider === 'fast' || isBusy}
+                        autoComplete="off"
+                      />
+                    </div>
+                    <small className="security-note">
+                      La persistencia actual usa localStorage para conservar el
+                      comportamiento original.
+                    </small>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+
           {status !== 'idle' && (
             <section className="ritual-grid">
-              <TranslationProgress
-                status={status}
-                progress={progress}
-                jobId={jobId}
-              />
-              <RitualLog logs={logs} logEndRef={logEndRef} />
+              <div className="progress-panel nordic-panel">
+                <div className="progress-heading">
+                  <div>
+                    <span className="section-overline">ESTADO DEL PROCESO</span>
+                    <h2>{progressLabel}</h2>
+                  </div>
+
+                  <div className="progress-number">
+                    <StatusGlyph status={status} />
+                    <span>{progress}%</span>
+                  </div>
+                </div>
+
+                <div
+                  className={`progress-track ${status}`}
+                  role="progressbar"
+                  aria-valuenow={progress}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <div
+                    className="progress-fill"
+                    style={{ width: `${progress}%` }}
+                  >
+                    <span className="progress-shimmer" />
+                  </div>
+                </div>
+
+                <div className="progress-footer">
+                  <div>
+                    <span className="mini-rune" aria-hidden="true">ᛟ</span>
+                    <span>
+                      {status === 'completed'
+                        ? 'Los archivos finales están listos.'
+                        : status === 'error'
+                          ? 'Revisa el registro del ritual para identificar el fallo.'
+                          : 'Procesando archivos y generando recursos. No cierres el motor.'}
+                    </span>
+                  </div>
+
+                  <span className="job-id">
+                    {jobId ? `JOB ${jobId}` : 'PREPARANDO JOB'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="log-panel nordic-panel">
+                <div className="log-header">
+                  <span aria-hidden="true">ᛃ</span>
+                  <strong>REGISTRO DEL RITUAL</strong>
+                  <span aria-hidden="true">ᛃ</span>
+                </div>
+
+                <div className="skyrim-terminal" aria-live="polite">
+                  {logs.length === 0 ? (
+                    <div className="log-placeholder">
+                      Esperando mensajes del motor...
+                    </div>
+                  ) : (
+                    logs.map((log, index) => (
+                      <div
+                        key={`${log.time}-${index}`}
+                        className={`log-entry ${log.level}`}
+                      >
+                        <span className="log-time">[{log.time}]</span>
+                        <span className="log-marker" aria-hidden="true">
+                          {log.level === 'error'
+                            ? '!'
+                            : log.level === 'success'
+                              ? '✓'
+                              : log.level === 'audio'
+                                ? '♫'
+                                : log.level === 'translate'
+                                  ? 'ᚱ'
+                                  : '›'}
+                        </span>
+                        <span className="log-text">{log.text}</span>
+                      </div>
+                    ))
+                  )}
+                  <div ref={logEndRef} />
+                </div>
+              </div>
             </section>
           )}
 
-          {/* Final Action Bar when Completed */}
           {status === 'completed' && (
             <section className="final-actions nordic-panel">
               {downloadUrl && (
@@ -697,7 +983,6 @@ function App() {
             </section>
           )}
 
-          {/* Error Retry Bar */}
           {status === 'error' && (
             <button
               type="button"
@@ -708,11 +993,10 @@ function App() {
             </button>
           )}
 
-          {/* Footer Motto */}
           <footer className="footer-motto">
-            <span aria-hidden="true">ᚨ</span>
+            <span>ᚨ</span>
             <p>LAS PALABRAS ANTIGUAS, AHORA EN TU IDIOMA</p>
-            <span aria-hidden="true">ᚱ</span>
+            <span>ᚱ</span>
           </footer>
         </div>
       </section>
