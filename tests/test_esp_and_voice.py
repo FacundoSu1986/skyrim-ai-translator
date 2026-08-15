@@ -470,18 +470,22 @@ def test_esp_parser_esl_light_plugin_explicit_handling(tmp_path):
     assert dialog_entry.actor == "Actor_FE001001"
 
 
-def test_esp_parser_winning_override_master_resolution(tmp_path):
+def test_esp_parser_origin_record_resolution_no_mast_override(tmp_path):
     """
-    Test 11 (WinningOverride): When a later master (or local mod) overrides an NPC from an earlier master,
-    the resolver uses WinningOverride semantics (latest declared master wins over earlier masters).
+    Test 11 (Origin-Record Resolution & No MAST-Order Override):
+    Demonstrates that the parser resolves FormID references strictly against their
+    origin owner plugin (RecordKey.plugin), and does NOT use the TES4.MAST declaration
+    order as an arbitrary winning override heuristic.
 
     Hierarchy:
-      - Skyrim.esm: NPC (0x0001A697) -> VTCK "MaleCommander"
-      - Patch.esm (MAST: ['Skyrim.esm']): overrides NPC (0x0001A697) with VTCK "MaleBrute"
+      - Skyrim.esm: NPC (0x0001A697) -> VTCK "MaleCommander", FULL "Jarl Balgruuf"
+      - Patch.esm (MAST: ['Skyrim.esm']): has an override for NPC (0x0001A697) with VTCK "MaleBrute"
       - TargetMod.esp (MAST: ['Skyrim.esm', 'Patch.esm']): INFO pointing to ANAM 0x0001A697
-        -> Resolves to 'MaleBrute' (winning override from Patch.esm).
+        (mod_index 0 -> points to Skyrim.esm:0x0001A697)
+        -> Resolves strictly to origin record in Skyrim.esm ('MaleCommander' / 'Jarl Balgruuf').
+           Effective load-order WinningOverride is deferred to runtime discovery.
     """
-    # 1. Skyrim.esm
+    # 1. Skyrim.esm (Origin master)
     skyrim_esm = tmp_path / "Skyrim.esm"
     vtyp_skyrim = make_record(b"VTYP", 0x00013AD8, make_subrecord(b"EDID", b"MaleCommander\x00"))
     npc_skyrim = make_record(
@@ -493,7 +497,7 @@ def test_esp_parser_winning_override_master_resolution(tmp_path):
     )
     skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_skyrim + npc_skyrim))
 
-    # 2. Patch.esm overriding NPC 0x0001A697 with MaleBrute (FormID 0x01013ADA local to Patch.esm)
+    # 2. Patch.esm (Intermediate master with override for 0x0001A697)
     patch_esm = tmp_path / "Patch.esm"
     vtyp_patch = make_record(b"VTYP", 0x01013ADA, make_subrecord(b"EDID", b"MaleBrute\x00"))
     npc_patch_override = make_record(
@@ -501,7 +505,7 @@ def test_esp_parser_winning_override_master_resolution(tmp_path):
         0x0001A697,  # mod_index 0 -> points to Skyrim.esm:0x01A697
         make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
         make_subrecord(b"FULL", b"Jarl Balgruuf (Patched)\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x01013ADA))  # mod_index 1 (local to Patch.esm)
+        make_subrecord(b"VTCK", struct.pack("<I", 0x01013ADA))
     )
     patch_esm.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"NPC_", vtyp_patch + npc_patch_override))
 
@@ -509,15 +513,15 @@ def test_esp_parser_winning_override_master_resolution(tmp_path):
     target_esp = tmp_path / "TargetMod.esp"
     info_body = (
         make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
-        make_subrecord(b"NAM1", b"I speak with patched brute strength.\x00")
+        make_subrecord(b"NAM1", b"I speak with origin strength.\x00")
     )
     info_rec = make_record(b"INFO", 0x02000001, info_body)
     target_esp.write_bytes(make_tes4_header(["Skyrim.esm", "Patch.esm"]) + make_grup(b"INFO", info_rec))
 
     entries = parse_esp_file(target_esp)
     dialog_entry = next(e for e in entries if e.is_dialog)
-    assert dialog_entry.voice_type == "MaleBrute"
-    assert dialog_entry.actor == "Jarl Balgruuf (Patched)"
+    assert dialog_entry.voice_type == "MaleCommander"
+    assert dialog_entry.actor == "Jarl Balgruuf"
 
 
 def test_esp_parser_local_tplt_resolution(tmp_path):

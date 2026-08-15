@@ -308,19 +308,12 @@ def _find_npc_data(
     origin_dir: Path,
 ) -> tuple[Optional[int], Optional[int], Optional[str], str, list[str]]:
     """
-    Finds the winning NPC record data for npc_key using WinningOverride semantics:
-      1. Local plugin definitions / overrides win first.
-      2. Declared masters in reverse order (later masters override earlier ones).
-      3. Origin master fallback.
+    Finds NPC record data in its owning (origin) plugin.
+    Effective winning overrides across load order are not supported in this phase.
 
     Returns (vtck_raw, tplt_raw, actor_name, owning_plugin, owning_masters).
     """
-    # 1. Local plugin override check
-    if (
-        npc_key in local_npc_vtck
-        or npc_key in local_npc_tplt
-        or npc_key in local_npc_name
-    ):
+    if npc_key.plugin == _norm_plugin(local_plugin_name):
         return (
             local_npc_vtck.get(npc_key),
             local_npc_tplt.get(npc_key),
@@ -329,29 +322,8 @@ def _find_npc_data(
             local_masters,
         )
 
-    # 2. Winning override among declared masters (in reverse order)
-    for m_name in reversed(local_masters):
-        m_data = master_resolver.get_or_load_master(m_name, origin_dir)
-        if m_data and (
-            npc_key in m_data.npc_to_vtck
-            or npc_key in m_data.npc_to_tplt
-            or npc_key in m_data.npc_to_name
-        ):
-            return (
-                m_data.npc_to_vtck.get(npc_key),
-                m_data.npc_to_tplt.get(npc_key),
-                m_data.npc_to_name.get(npc_key),
-                m_data.plugin_name,
-                m_data.masters,
-            )
-
-    # 3. Origin master fallback if not in declared masters
     origin_data = master_resolver.get_or_load_master(npc_key.plugin, origin_dir)
-    if origin_data and (
-        npc_key in origin_data.npc_to_vtck
-        or npc_key in origin_data.npc_to_tplt
-        or npc_key in origin_data.npc_to_name
-    ):
+    if origin_data:
         return (
             origin_data.npc_to_vtck.get(npc_key),
             origin_data.npc_to_tplt.get(npc_key),
@@ -360,6 +332,10 @@ def _find_npc_data(
             origin_data.masters,
         )
 
+    logger.warning(
+        "Could not resolve NPC %s: origin master '%s' not available",
+        npc_key, npc_key.plugin
+    )
     return None, None, None, npc_key.plugin, []
 
 
@@ -376,8 +352,8 @@ def _resolve_voice_type_for_npc(
     max_depth: int = 10,
 ) -> tuple[Optional[str], Optional[str]]:
     """
-    Recursively resolves (actor_name, voice_type) for an NPC RecordKey.
-    Supports VTCK direct lookup, TPLT template inheritance, and WinningOverride.
+    Resolves (actor_name, voice_type) for an NPC RecordKey by querying its origin record.
+    Follows VTCK direct lookup and TPLT template inheritance chains.
     Includes cycle detection and max depth protection.
     """
     curr_key: Optional[RecordKey] = initial_npc_key
@@ -408,20 +384,18 @@ def _resolve_voice_type_for_npc(
         if vtck_raw is not None:
             vtck_key = _resolve_record_key(vtck_raw, owning_plugin, owning_masters)
             if vtck_key is not None:
-                # Check winning override for VTYP
-                if vtck_key in local_vtyp_edid:
-                    return primary_actor_name, local_vtyp_edid[vtck_key]
-
-                for m_name in reversed(local_masters):
-                    m_data = master_resolver.get_or_load_master(m_name, origin_dir)
-                    if m_data and vtck_key in m_data.vtyp_to_edid:
-                        return primary_actor_name, m_data.vtyp_to_edid[vtck_key]
+                # Resolve VTYP in its origin plugin
+                if vtck_key.plugin == _norm_plugin(local_plugin_name):
+                    return primary_actor_name, local_vtyp_edid.get(vtck_key)
 
                 origin_vtyp_data = master_resolver.get_or_load_master(vtck_key.plugin, origin_dir)
-                if origin_vtyp_data and vtck_key in origin_vtyp_data.vtyp_to_edid:
-                    return primary_actor_name, origin_vtyp_data.vtyp_to_edid[vtck_key]
+                if origin_vtyp_data:
+                    return primary_actor_name, origin_vtyp_data.vtyp_to_edid.get(vtck_key)
 
-                logger.warning("Could not resolve VoiceType EDID for %s in available masters", vtck_key)
+                logger.warning(
+                    "Could not resolve VoiceType EDID for %s: origin master '%s' not available",
+                    vtck_key, vtck_key.plugin
+                )
             else:
                 logger.warning("Invalid VTCK FormID 0x%08X on NPC %s", vtck_raw, curr_key)
             return primary_actor_name, None
@@ -467,7 +441,7 @@ def parse_esp_file(
     if sig != b"TES4":
         logger.warning(f"File {path.name} does not start with TES4 header (got {sig})")
 
-    # Pass 0: Extract declared masters from TES4 header
+    # Extract declared masters in order from TES4 header
     local_masters: list[str] = []
     for tag, _flags, _form_id_val, _form_id_hex, body in _iter_records(data):
         if tag == b"TES4":
@@ -521,18 +495,18 @@ def parse_esp_file(
     entries: List[StringEntry] = []
     seen_keys = set()
 
-    for tag, _flags, form_id_val, form_id_hex, body in _iter_records(data):
+    for tag, flags, form_id_val, form_id_hex, body in _iter_records(data):
         if tag not in INTERESTING_RECORDS:
             continue
 
         speaker_formid: Optional[int] = None
         direct_vtck: Optional[int] = None
 
-        for s_type, payload in _read_subrecords(body):
-            if s_type == b"ANAM" and len(payload) >= 4:
-                speaker_formid = int.from_bytes(payload[:4], "little")
-            elif s_type == b"VTCK" and len(payload) >= 4:
-                direct_vtck = int.from_bytes(payload[:4], "little")
+        if tag == b"INFO":
+            for s_type, payload in _read_subrecords(body):
+                if s_type == b"ANAM" and len(payload) >= 4:
+                    speaker_formid = int.from_bytes(payload[:4], "little")
+                    break
 
         actor_name: Optional[str] = None
         voice_type: Optional[str] = None
@@ -559,18 +533,12 @@ def parse_esp_file(
         elif direct_vtck is not None:
             vtck_key = _resolve_record_key(direct_vtck, plugin_name, local_masters)
             if vtck_key is not None:
-                if vtck_key in local_vtyp_to_edid:
-                    voice_type = local_vtyp_to_edid[vtck_key]
+                if vtck_key.plugin == _norm_plugin(plugin_name):
+                    voice_type = local_vtyp_to_edid.get(vtck_key)
                 else:
-                    for m_name in reversed(local_masters):
-                        m_data = master_resolver.get_or_load_master(m_name, path.parent)
-                        if m_data and vtck_key in m_data.vtyp_to_edid:
-                            voice_type = m_data.vtyp_to_edid[vtck_key]
-                            break
-                    if not voice_type:
-                        origin_vtyp_data = master_resolver.get_or_load_master(vtck_key.plugin, path.parent)
-                        if origin_vtyp_data and vtck_key in origin_vtyp_data.vtyp_to_edid:
-                            voice_type = origin_vtyp_data.vtyp_to_edid[vtck_key]
+                    origin_vtyp_data = master_resolver.get_or_load_master(vtck_key.plugin, path.parent)
+                    if origin_vtyp_data:
+                        voice_type = origin_vtyp_data.vtyp_to_edid.get(vtck_key)
 
         if tag == b"NPC_" and not actor_name:
             rec_key = _resolve_record_key(form_id_val, plugin_name, local_masters)

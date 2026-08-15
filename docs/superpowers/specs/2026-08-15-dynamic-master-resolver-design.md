@@ -17,7 +17,7 @@ Previously, `esp_parser.py` relied on a static hardcoded table `VANILLA_VOICE_TY
 1. Failed for any NPC or VoiceType defined in external masters (e.g., `Skyrim.esm`, `Update.esm`, `Dawnguard.esm`, `Dragonborn.esm`, or third-party masters).
 2. Fabricated false VoiceType data (`"MaleNord"`) when references were missing, polluting metadata and TTS assignments.
 3. Completely ignored `TES4` master declarations (`MAST` subrecords) and Bethesda FormID master-index semantics.
-4. Ignored template inheritance (`TPLT`) and winning overrides across master plugins.
+4. Ignored template inheritance (`TPLT`).
 
 ---
 
@@ -55,12 +55,11 @@ For any raw 32-bit `form_id` in a file with `masters: list[str]` and filename `c
    Emits `logger.warning("FormID 0x%08X has invalid master index %d (declared masters count: %d)", form_id, mod_index, len(masters))`.
    Returns `None` (unresolved). **Never** falls back to local plugin.
 
-### 2.3 Winning Override Semantics
+### 2.3 Origin Record Resolution (WinningOverride Deferred)
 
 When resolving a `RecordKey(plugin, object_id)`:
-1. **Local Plugin Override:** If the target plugin defines an override for `RecordKey`, the local definition wins.
-2. **Declared Masters in Reverse Order:** If not defined locally, search declared masters in reverse order (`reversed(masters)`). The latest declared master providing data for `RecordKey` wins over earlier masters.
-3. **Origin Master Fallback:** Direct lookup in the originating plugin file if not overridden.
+1. **Origin Plugin Resolution (Supported):** The record is resolved directly against its owning origin plugin (`RecordKey.plugin`), or in the local plugin if `plugin == current_plugin`.
+2. **Effective Load-Order WinningOverride (Not Supported Yet):** In Creation Engine, true winning override resolution requires knowledge of the active global load order (e.g. `plugins.txt` or Mod Organizer 2 VFS order). The order of `MAST` declarations in a plugin's `TES4` header **does not** equal the runtime load order. Therefore, the parser strictly avoids arbitrary heuristics (such as `reversed(MAST)` or filesystem iteration order) and queries the record from its origin plugin.
 
 ### 2.4 Template Actor Inheritance (`TPLT`)
 
@@ -68,6 +67,7 @@ When an `NPC_` record lacks a direct `VTCK` (VoiceType FormID), the resolver ins
 - Recursively traverses `NPC_ -> TPLT -> NPC_ -> VTCK`.
 - Protected by `visited: set[RecordKey]` cycle detection and maximum recursion depth (10 levels).
 - If neither `VTCK` nor a valid template chain resolves, returns `voice_type = None` cleanly.
+- **Note on Bethesda Template Flags:** The resolver traverses `TPLT` relationships directly without fully parsing `ACBS`/`DNAM` inheritance bitmasks ("Use Traits" `0x00000001`). This is documented as a conservative limitation.
 
 ---
 
@@ -127,14 +127,24 @@ def parse_esp_file(
 
 ---
 
-## 4. Explicit Limitations & Future Work
+## 4. Supported vs. Not Supported Scope
 
-1. **Runtime Master Discovery (Separate Task):**
-   - Full virtual load order (VFS) across independent Mod Organizer 2 mod folders and `Skyrim/Data` discovery is intentionally decoupled and will be implemented in a dedicated runtime discovery layer.
-2. **Localized Plugin Strings (`.STRINGS`):**
-   - `_is_valid_text()` provides basic binary filtering for unlocalized records. Native decompression of external `.strings`/`.dlstrings`/`.ilstrings` is not included in this parser phase.
-3. **Light / ESL Plugins (`0xFE...`):**
-   - FormIDs starting with `0xFE` return `None` (unresolved) with warning logs.
+### Supported
+- `TES4.MAST` header parsing and relative index resolution.
+- Canonical `RecordKey(plugin, object_id)` across plugins.
+- Origin-record resolution across master files.
+- Transitive master references (`Mod -> Update.esm -> Skyrim.esm`).
+- `TPLT` template actor inheritance traversal.
+- Cycle and pathological depth protection (`visited` set + `max_depth = 10`).
+- Instrumented in-memory read-only master caching.
+
+### Not Supported (Deferred)
+- Effective MO2 / plugin load order.
+- WinningOverride across arbitrary load order.
+- ESL / Light plugin (`0xFE...`) FormID resolution.
+- Complete Bethesda template inheritance flags (`ACBS`/`DNAM` bitmasks).
+- Localized plugin strings (`.STRINGS` / `.DLSTRINGS` / `.ILSTRINGS`).
+- Automatic runtime master discovery (MO2 VFS / registry scanning).
 
 ---
 
@@ -150,7 +160,7 @@ def parse_esp_file(
 8. **Test 8 (Master Immutability):** Verifies master file SHA256 hash before and after parsing to ensure 0 byte modifications.
 9. **Test 9 (Master Cache Performance):** Verifies single read/parse when 500 dialogue records reference the same master via runtime instrumentation.
 10. **Test 10 (ESL / Light Detection):** Verifies `0xFE...` FormIDs are detected and safely return `None` with an explicit warning.
-11. **Test 11 (WinningOverride Resolution):** Verifies that later masters in `MAST` list override earlier masters for the same `RecordKey`.
+11. **Test 11 (Origin-Record Resolution & No MAST-Order Override):** Verifies that FormID references resolve to their origin plugin, and that `MAST` declaration order is NOT used as an arbitrary override heuristic.
 12. **Test 12 (Local TPLT Inheritance):** Verifies `NPC_ (Instance)` $\to$ `TPLT` $\to$ `NPC_ (Template)` $\to$ `VTCK` $\to$ `VTYP`.
 13. **Test 13 (Master TPLT Inheritance):** Verifies `NPC_` in mod $\to$ `TPLT` in `MasterA.esm` $\to$ `VTCK` in `Skyrim.esm`.
 14. **Test 14 (TPLT Cycle Protection):** Verifies cyclic template references (`NPC A <-> NPC B`) terminate safely with `voice_type is None`.
