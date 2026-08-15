@@ -344,7 +344,16 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         file_p = Path(job["file_path"])
         if file_p.suffix.lower() in [".esp", ".esm", ".esl"]:
             await log_msg(f"📜 Extrayendo cadenas binarias directamente de '{file_p.name}'...", 15, "info")
-            entries = await asyncio.to_thread(parse_esp_file, file_p)
+            master_search_paths = []
+            if job.get("mo2_path") and job.get("mod_name"):
+                source_mod_dir = Path(job["mo2_path"]) / job["mod_name"]
+                if source_mod_dir.is_dir():
+                    master_search_paths.append(source_mod_dir)
+            entries = await asyncio.to_thread(
+                parse_esp_file,
+                file_p,
+                master_search_paths=master_search_paths or None
+            )
         else:
             await log_msg(f"📖 Leyendo pergamino JSON '{file_p.name}'...", 15, "info")
             entries = parse_strings_file(file_p)
