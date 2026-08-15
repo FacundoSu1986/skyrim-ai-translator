@@ -77,7 +77,7 @@ def create_openai_compatible_translator(
     """Creates an async translation callable targeting any OpenAI-compatible API (OpenAI, DeepSeek, Groq, Ollama, OpenRouter)."""
     async def _call(text: str, context: str) -> str:
         if not api_key and "localhost" not in api_base and "127.0.0.1" not in api_base:
-            return f"Traducido: {text}"
+            raise RuntimeError("Se requiere api_key para usar una API remota compatible con OpenAI")
 
         url = f"{api_base.rstrip('/')}/chat/completions"
         headers = {
@@ -104,7 +104,7 @@ def create_openai_compatible_translator(
             return await asyncio.to_thread(_request_sync)
         except Exception as e:
             logger.error(f"Error calling LLM API ({url}): {e}")
-            return f"Traducido: {text}"
+            raise RuntimeError(f"Fallo de la API de traducción ({url}): {e}") from e
             
     return _call
 

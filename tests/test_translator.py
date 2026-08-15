@@ -139,8 +139,8 @@ def test_skyrim_glossary_entries():
 async def test_openai_compatible_translator_no_key():
     from src.translator import create_openai_compatible_translator
     fn = create_openai_compatible_translator(api_key="")
-    res = await fn("Sword", "Context: weapon")
-    assert res == "Traducido: Sword"
+    with pytest.raises(RuntimeError, match="api_key"):
+        await fn("Sword", "Context: weapon")
 
 
 @pytest.mark.asyncio
@@ -182,8 +182,8 @@ async def test_openai_compatible_translator_mock_error(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen_error)
 
     fn = create_openai_compatible_translator(api_key="sk-test-key")
-    res = await fn("Iron Sword", "Context: weapon")
-    assert res == "Traducido: Iron Sword"
+    with pytest.raises(RuntimeError, match="Fallo de la API"):
+        await fn("Iron Sword", "Context: weapon")
 
 
 @pytest.mark.asyncio

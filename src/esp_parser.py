@@ -1,9 +1,8 @@
-import io
 import struct
 import zlib
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Iterator, List, Tuple
 from src.models import StringEntry
 
 logger = logging.getLogger(__name__)
@@ -30,9 +29,12 @@ INTERESTING_RECORDS = {
     b"LCTN",  # Locations (FULL: name)
 }
 
-INTERESTING_SUBRECORDS = {b"FULL", b"DESC", b"NAM1", b"NNAM", b"RNAM", b"DNAM", b"SHRT"}
+INTERESTING_SUBRECORDS = {b"FULL", b"DESC", b"NAM1", b"NNAM", b"RNAM", b"SHRT"}
+# DNAM holds text only in these record types; elsewhere it is binary data
+DNAM_TEXT_RECORDS = {b"MGEF", b"RACE"}
 
 FLAG_COMPRESSED = 0x00040000
+RECORD_HEADER_SIZE = 24  # Skyrim standard record header length
 
 
 def _decode_string(raw_bytes: bytes) -> str:
@@ -50,6 +52,52 @@ def _decode_string(raw_bytes: bytes) -> str:
             return cleaned.decode("latin1", errors="replace")
 
 
+def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, str, bytes]]:
+    """Yields (record_type, flags, form_id_hex, body) for every record, entering GRUPs."""
+    offset = 0
+    total_len = len(data)
+
+    while offset + RECORD_HEADER_SIZE <= total_len:
+        tag = data[offset:offset+4]
+
+        if tag == b"GRUP":
+            # Records live inside GRUPs: step past the 24-byte group header
+            # and keep iterating the records it contains.
+            offset += RECORD_HEADER_SIZE
+            continue
+
+        rec_size = struct.unpack("<I", data[offset+4:offset+8])[0]
+        rec_flags = struct.unpack("<I", data[offset+8:offset+12])[0]
+        form_id_val = struct.unpack("<I", data[offset+12:offset+16])[0]
+        form_id_hex = f"{form_id_val:08X}"
+        body = data[offset+RECORD_HEADER_SIZE:offset+RECORD_HEADER_SIZE+rec_size]
+
+        if rec_flags & FLAG_COMPRESSED:
+            if len(body) >= 4:
+                decompressed_size = struct.unpack("<I", body[:4])[0]
+                try:
+                    body = zlib.decompress(body[4:], bufsize=decompressed_size)
+                except Exception as err:
+                    logger.error(f"Error decompressing record {form_id_hex} ({tag}): {err}")
+                    body = b""
+            else:
+                body = b""
+
+        yield tag, rec_flags, form_id_hex, body
+        offset += RECORD_HEADER_SIZE + rec_size
+
+
+def _read_subrecords(body: bytes) -> Iterator[Tuple[bytes, bytes]]:
+    """Yields (subrecord_type, payload) pairs for a record body."""
+    offset = 0
+    body_len = len(body)
+    while offset + 6 <= body_len:
+        s_type = body[offset:offset+4]
+        s_size = struct.unpack("<H", body[offset+4:offset+6])[0]
+        yield s_type, body[offset+6:offset+6+s_size]
+        offset += 6 + s_size
+
+
 def parse_esp_file(filepath: str | Path) -> List[StringEntry]:
     """
     Parses a Skyrim Bethesda Plugin file (.esp, .esm, .esl) and extracts all
@@ -62,12 +110,7 @@ def parse_esp_file(filepath: str | Path) -> List[StringEntry]:
     with open(path, "rb") as f:
         data = f.read()
 
-    entries: List[StringEntry] = []
-    seen_keys = set()
-    offset = 0
-    total_len = len(data)
-
-    if total_len < 24:
+    if len(data) < RECORD_HEADER_SIZE:
         return []
 
     # Verify TES4 header
@@ -75,85 +118,59 @@ def parse_esp_file(filepath: str | Path) -> List[StringEntry]:
     if sig != b"TES4":
         logger.warning(f"File {path.name} does not start with TES4 header (got {sig})")
 
-    def parse_subrecords(sub_data: bytes, form_id_hex: str, rec_type: bytes) -> None:
-        sub_offset = 0
-        sub_len = len(sub_data)
-        actor_name = None
-        voice_type = None
+    # Pass 1: build FormID -> EditorID map so VTCK voice references can be
+    # resolved to real voice type names (e.g. "MaleNord", "FemaleCommander")
+    formid_to_edid: dict[str, str] = {}
+    for tag, _flags, form_id_hex, body in _iter_records(data):
+        for s_type, payload in _read_subrecords(body):
+            if s_type == b"EDID" and payload:
+                edid = _decode_string(payload).strip()
+                if edid:
+                    formid_to_edid[form_id_hex] = edid
+                break
 
-        # First pass to find voice type or actor if present
-        scan_offset = 0
-        while scan_offset + 6 <= sub_len:
-            s_type = sub_data[scan_offset:scan_offset+4]
-            s_size = struct.unpack("<H", sub_data[scan_offset+4:scan_offset+6])[0]
-            s_payload = sub_data[scan_offset+6:scan_offset+6+s_size]
-            if s_type == b"VTCK":  # Voice Type FormID or identifier
-                voice_type = f"Voice_{form_id_hex}"
-            elif s_type == b"ANAM":  # Speaker actor FormID
-                actor_name = f"Actor_{int.from_bytes(s_payload[:4], 'little'):08X}"
-            scan_offset += 6 + s_size
+    entries: List[StringEntry] = []
+    seen_keys = set()
 
-        # Second pass to extract texts
-        sub_offset = 0
-        while sub_offset + 6 <= sub_len:
-            s_type = sub_data[sub_offset:sub_offset+4]
-            s_size = struct.unpack("<H", sub_data[sub_offset+4:sub_offset+6])[0]
-            s_content = sub_data[sub_offset+6:sub_offset+6+s_size]
-
-            if s_type in INTERESTING_SUBRECORDS and s_size > 0:
-                text_val = _decode_string(s_content).strip()
-                if text_val and len(text_val) > 0:
-                    unique_key = (form_id_hex, s_type.decode("ascii", errors="ignore"))
-                    if unique_key not in seen_keys:
-                        seen_keys.add(unique_key)
-                        is_dialog = (rec_type == b"INFO" and s_type == b"NAM1")
-                        
-                        entries.append(
-                            StringEntry(
-                                form_id=form_id_hex,
-                                text=text_val,
-                                is_dialog=is_dialog,
-                                actor=actor_name,
-                                voice_type=voice_type or ("MaleNord" if is_dialog else None)
-                            )
-                        )
-
-            sub_offset += 6 + s_size
-
-    # Iterate through chunks / GRUP / records
-    while offset + 24 <= total_len:
-        tag = data[offset:offset+4]
-
-        if tag == b"GRUP":
-            grup_size = struct.unpack("<I", data[offset+4:offset+8])[0]
-            if grup_size == 0 or offset + grup_size > total_len:
-                offset += 24
-            else:
-                # Move inside group header (24 bytes)
-                offset += 24
+    for tag, _flags, form_id_hex, body in _iter_records(data):
+        if tag not in INTERESTING_RECORDS:
             continue
 
-        # Regular Record
-        rec_size = struct.unpack("<I", data[offset+4:offset+8])[0]
-        rec_flags = struct.unpack("<I", data[offset+8:offset+12])[0]
-        form_id_val = struct.unpack("<I", data[offset+12:offset+16])[0]
-        form_id_hex = f"{form_id_val:08X}"
+        actor_name = None
+        voice_type = None
+        for s_type, payload in _read_subrecords(body):
+            if s_type == b"VTCK" and len(payload) >= 4:
+                # Voice Type FormID: resolve against this plugin's editor IDs
+                vtck_formid = f"{int.from_bytes(payload[:4], 'little'):08X}"
+                voice_type = formid_to_edid.get(vtck_formid)
+            elif s_type == b"ANAM" and len(payload) >= 4:
+                actor_name = f"Actor_{int.from_bytes(payload[:4], 'little'):08X}"
 
-        rec_header_size = 24  # Skyrim standard record header length
-        rec_body = data[offset+rec_header_size:offset+rec_header_size+rec_size]
+        for s_type, payload in _read_subrecords(body):
+            is_text_subrecord = s_type in INTERESTING_SUBRECORDS or (
+                s_type == b"DNAM" and tag in DNAM_TEXT_RECORDS
+            )
+            if not is_text_subrecord or not payload:
+                continue
 
-        if tag in INTERESTING_RECORDS:
-            if rec_flags & FLAG_COMPRESSED:
-                if len(rec_body) >= 4:
-                    decompressed_size = struct.unpack("<I", rec_body[:4])[0]
-                    try:
-                        decompressed_body = zlib.decompress(rec_body[4:], bufsize=decompressed_size)
-                        parse_subrecords(decompressed_body, form_id_hex, tag)
-                    except Exception as err:
-                        logger.error(f"Error decompressing record {form_id_hex} ({tag}): {err}")
-            else:
-                parse_subrecords(rec_body, form_id_hex, tag)
+            text_val = _decode_string(payload).strip()
+            if not text_val:
+                continue
 
-        offset += rec_header_size + rec_size
+            unique_key = (form_id_hex, s_type.decode("ascii", errors="ignore"))
+            if unique_key in seen_keys:
+                continue
+            seen_keys.add(unique_key)
+
+            is_dialog = (tag == b"INFO" and s_type == b"NAM1")
+            entries.append(
+                StringEntry(
+                    form_id=form_id_hex,
+                    text=text_val,
+                    is_dialog=is_dialog,
+                    actor=actor_name,
+                    voice_type=voice_type or ("MaleNord" if is_dialog else None)
+                )
+            )
 
     return entries

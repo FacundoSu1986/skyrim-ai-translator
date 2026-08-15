@@ -24,16 +24,45 @@ from src.dsd_exporter import export_to_dsd
 
 app = FastAPI(title="Skyrim AI Translation Agent API")
 
+# CORS: credentials only make sense with explicit origins, never with a wildcard.
+_cors_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # In-memory storage for translation jobs
 jobs = {}
+
+
+def _sanitize_name(name: str) -> str:
+    """Strips any path components so user-supplied names can't escape their target directory."""
+    clean = Path(name.replace("\\", "/")).name
+    if not clean or clean in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
+    return clean
+
+
+def _copy_build_to_dir(build_dir: Path, target_dir: Path) -> None:
+    """Copies every generated artifact from build_dir into target_dir (synchronous)."""
+    for item in build_dir.iterdir():
+        target_dest = target_dir / item.name
+        if item.is_dir():
+            shutil.copytree(item, target_dest, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, target_dest)
+
+
+def _zip_dir(build_dir: Path, zip_path: Path) -> None:
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(build_dir):
+            for file in files:
+                file_full_path = Path(root) / file
+                arcname = file_full_path.relative_to(build_dir)
+                zipf.write(file_full_path, arcname)
 
 AVAILABLE_VOICES = [
     {"id": "es-ES-AlvaroNeural", "name": "Álvaro (Español España - Masculino)", "lang": "es-ES"},
@@ -102,7 +131,7 @@ async def auto_detect_mo2():
         os.path.expandvars(r"%LOCALAPPDATA%\ModOrganizer\Skyrim Special Edition\mods"),
         os.path.expandvars(r"%LOCALAPPDATA%\ModOrganizer\Skyrim\mods"),
     ]
-    
+
     for path_str in candidates:
         if path_str and os.path.isdir(path_str):
             try:
@@ -114,7 +143,7 @@ async def auto_detect_mo2():
                     return {"found": True, "path": path_str, "mods": sorted(mods)}
             except Exception:
                 pass
-                
+
     return {"found": False, "path": "", "mods": []}
 
 
@@ -123,10 +152,10 @@ async def get_mo2_mods(path: str = Query(...)):
     """Scans and lists installed mods from a Mod Organizer 2 mods folder."""
     if not os.path.isdir(path):
         return {"mods": []}
-    
+
     try:
         mods = [
-            name for name in os.listdir(path) 
+            name for name in os.listdir(path)
             if os.path.isdir(os.path.join(path, name)) and not name.startswith(".")
         ]
         return {"mods": sorted(mods)}
@@ -143,11 +172,12 @@ async def upload_json(
     job_id = str(uuid.uuid4())
     upload_dir = Path(f"output/jobs/{job_id}")
     upload_dir.mkdir(parents=True, exist_ok=True)
-    
-    file_path = upload_dir / file.filename
+
+    safe_name = _sanitize_name(file.filename or "upload.dat")
+    file_path = upload_dir / safe_name
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
-        
+
     cfg = {}
     if config:
         try:
@@ -155,7 +185,7 @@ async def upload_json(
         except Exception:
             pass
 
-    plugin_name = file.filename
+    plugin_name = safe_name
     for ext in [".json", ".esp", ".esm", ".esl"]:
         if plugin_name.lower().endswith(ext):
             plugin_name = plugin_name[:-len(ext)]
@@ -169,13 +199,14 @@ async def upload_json(
         "logs": [],
         "output_dir": str(upload_dir / "build")
     }
-    return {"job_id": job_id, "plugin_name": jobs[job_id]["plugin_name"]}
+    return {"job_id": job_id, "plugin_name": plugin_name}
 
 
 @app.post("/api/mo2/start")
 async def start_mo2_translation(req: MO2TranslateRequest):
     """Starts translation job directly from a mod selected in Mod Organizer 2."""
-    mod_dir = Path(req.mo2_path) / req.mod_name
+    mod_name = _sanitize_name(req.mod_name)
+    mod_dir = Path(req.mo2_path) / mod_name
     if not mod_dir.is_dir():
         raise HTTPException(status_code=404, detail="Directorio del mod no encontrado en MO2")
 
@@ -183,13 +214,13 @@ async def start_mo2_translation(req: MO2TranslateRequest):
     upload_dir = Path(f"output/jobs/{job_id}")
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Search for existing JSON
-    json_files = list(mod_dir.glob("*.json")) + list(mod_dir.glob("**/*.json"))
-    
-    # 2. Search for real Skyrim .esp, .esm, .esl plugins
-    esp_files = list(mod_dir.glob("*.esp")) + list(mod_dir.glob("*.esm")) + list(mod_dir.glob("*.esl"))
+    # 1. Search for existing JSON (recursive glob already includes root level)
+    json_files = sorted(set(mod_dir.glob("**/*.json")))
 
-    plugin_file_name = req.mod_name
+    # 2. Search for real Skyrim .esp, .esm, .esl plugins
+    esp_files = sorted(mod_dir.glob("*.esp")) + sorted(mod_dir.glob("*.esm")) + sorted(mod_dir.glob("*.esl"))
+
+    plugin_file_name = mod_name
     if json_files:
         target_file = json_files[0]
         file_path = upload_dir / target_file.name
@@ -202,21 +233,26 @@ async def start_mo2_translation(req: MO2TranslateRequest):
         shutil.copy(target_file, file_path)
     else:
         # Fallback template
-        file_path = upload_dir / f"{req.mod_name}.json"
+        file_path = upload_dir / f"{mod_name}.json"
         mock_data = [
-            {"FormID": "0001234A", "Text": f"Welcome to {req.mod_name} in Skyrim.", "is_dialog": True, "actor": "Guard", "voice_type": "MaleNord"},
+            {"FormID": "0001234A", "Text": f"Welcome to {mod_name} in Skyrim.", "is_dialog": True, "actor": "Guard", "voice_type": "MaleNord"},
             {"FormID": "0001234B", "Text": f"Greetings traveler, looking for adventure?", "is_dialog": True, "actor": "Merchant", "voice_type": "FemaleCommander"},
-            {"FormID": "0001234C", "Text": f"{req.mod_name} Questline", "is_dialog": False}
+            {"FormID": "0001234C", "Text": f"{mod_name} Questline", "is_dialog": False}
         ]
         file_path.write_text(json.dumps(mock_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    # Never persist the API key in the job config dict
+    cfg = req.model_dump()
+    cfg.pop("api_key", None)
     jobs[job_id] = {
         "status": "pending",
         "file_path": str(file_path),
         "plugin_name": plugin_file_name,
-        "config": req.model_dump(),
+        "config": cfg,
+        # Transient: consumed and removed by the websocket handler
+        "api_key": req.api_key,
         "mo2_path": req.mo2_path,
-        "mod_name": req.mod_name,
+        "mod_name": mod_name,
         "progress": 0,
         "logs": [],
         "output_dir": str(upload_dir / "build")
@@ -240,7 +276,8 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     generate_voice = cfg.get("generate_voice", True)
     default_voice = cfg.get("voice", "es-ES-AlvaroNeural")
     auto_inject = cfg.get("auto_inject", True)
-    api_key = cfg.get("api_key")
+    # Transient key: read once, then removed from the job record
+    api_key = job.pop("api_key", None) or cfg.pop("api_key", None)
     api_base = cfg.get("api_base", "https://api.openai.com/v1")
     model = cfg.get("model", "gpt-4o-mini")
 
@@ -249,19 +286,19 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         if progress is not None:
             job["progress"] = progress
         await websocket.send_json({
-            "log": msg, 
-            "progress": job["progress"], 
+            "log": msg,
+            "progress": job["progress"],
             "level": level,
             "status": job["status"]
         })
 
     try:
         await log_msg(f"⚔️ Iniciando pipeline para '{job['plugin_name']}'...", 5, "info")
-        
+
         file_p = Path(job["file_path"])
         if file_p.suffix.lower() in [".esp", ".esm", ".esl"]:
             await log_msg(f"📜 Extrayendo cadenas binarias directamente de '{file_p.name}'...", 15, "info")
-            entries = parse_esp_file(file_p)
+            entries = await asyncio.to_thread(parse_esp_file, file_p)
         else:
             await log_msg(f"📖 Leyendo pergamino JSON '{file_p.name}'...", 15, "info")
             entries = parse_strings_file(file_p)
@@ -283,16 +320,20 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             await log_msg("⚡ Usando Traductor Neuronal Gratuito con Lore de Bethesda...", 40, "info")
 
         translated_entries = await translate_entries(
-            entries, 
-            target_lang=target_lang, 
+            entries,
+            target_lang=target_lang,
             api_callable=translator_fn
         )
-        await log_msg(f"✅ Traducción completada con éxito.", 60, "success")
+        failed = sum(1 for e in translated_entries if e.translated_text is None)
+        if failed:
+            await log_msg(f"⚠️ {failed}/{len(translated_entries)} textos no se pudieron traducir (se omitirán del DSD).", 60, "error")
+        else:
+            await log_msg("✅ Traducción completada con éxito.", 60, "success")
 
         # 3. Audio generation with Smart VoiceType Mapping
         build_dir = Path(job["output_dir"])
         build_dir.mkdir(parents=True, exist_ok=True)
-        
+
         dialog_entries = [e for e in translated_entries if e.is_dialog]
         if generate_voice and dialog_entries:
             await log_msg(f"🎙️ Generando voces neuronales ({len(dialog_entries)} diálogos)...", 65, "audio")
@@ -300,21 +341,29 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             voice_base_dir.mkdir(parents=True, exist_ok=True)
 
             success_count = 0
-            for idx, entry in enumerate(dialog_entries):
-                # Resolve smart voice by gender/race
-                assigned_voice = resolve_voice_for_entry(entry.voice_type, default_fallback=default_voice)
+            tts_semaphore = asyncio.Semaphore(5)
+            total = len(dialog_entries)
+            log_every = max(1, total // 5)
 
-                ok = await generate_voice_file(
-                    entry, 
-                    str(voice_base_dir), 
-                    voice=assigned_voice,
-                    tts_class=edge_tts.Communicate
-                )
+            async def _gen_voice(idx_entry):
+                idx, entry = idx_entry
+                assigned_voice = resolve_voice_for_entry(entry.voice_type, default_fallback=default_voice)
+                async with tts_semaphore:
+                    ok = await generate_voice_file(
+                        entry,
+                        str(voice_base_dir),
+                        voice=assigned_voice,
+                        tts_class=edge_tts.Communicate
+                    )
                 if ok:
+                    nonlocal success_count
                     success_count += 1
-                curr_progress = 65 + int((idx + 1) / len(dialog_entries) * 20)
-                if idx % max(1, len(dialog_entries) // 5) == 0 or idx == len(dialog_entries) - 1:
-                    await log_msg(f"🔊 [{assigned_voice.split('-')[2]}] Diálogo {idx+1}/{len(dialog_entries)} generado...", curr_progress, "audio")
+                curr_progress = 65 + int((idx + 1) / total * 20)
+                if idx % log_every == 0 or idx == total - 1:
+                    voice_label = assigned_voice.split("-")[2] if assigned_voice.count("-") >= 2 else assigned_voice
+                    await log_msg(f"🔊 [{voice_label}] Diálogo {idx+1}/{total} generado...", curr_progress, "audio")
+
+            await asyncio.gather(*[_gen_voice(pair) for pair in enumerate(dialog_entries)])
 
             await log_msg(f"✅ {success_count} archivos de voz neuronal organizados por VoiceType.", 85, "success")
         else:
@@ -331,28 +380,18 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             target_mod_dir = Path(job["mo2_path"]) / job["mod_name"]
             if target_mod_dir.is_dir():
                 await log_msg(f"🚀 Auto-inyectando directamente en '{job['mod_name']}'...", 95, "success")
-                for item in build_dir.iterdir():
-                    target_dest = target_mod_dir / item.name
-                    if item.is_dir():
-                        shutil.copytree(item, target_dest, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(item, target_dest)
+                await asyncio.to_thread(_copy_build_to_dir, build_dir, target_mod_dir)
                 await log_msg("✅ ¡Mod inyectado automáticamente! Listo para jugar en Skyrim.", 98, "success")
 
         # 6. Build ZIP bundle
         zip_path = Path(f"output/jobs/{job_id}/{job['plugin_name']}_Spanish_Translation.zip")
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for root, _, files in os.walk(build_dir):
-                for file in files:
-                    file_full_path = Path(root) / file
-                    arcname = file_full_path.relative_to(build_dir)
-                    zipf.write(file_full_path, arcname)
+        await asyncio.to_thread(_zip_dir, build_dir, zip_path)
 
         job["zip_path"] = str(zip_path)
         job["status"] = "completed"
         await log_msg("🎉 ¡Ritual completado! Tu mod de Skyrim está 100% traducido y doblado.", 100, "success")
         await websocket.send_json({
-            "status": "completed", 
+            "status": "completed",
             "download_url": f"/api/download/{job_id}",
             "job_id": job_id,
             "has_mo2": bool(job.get("mo2_path") and job.get("mod_name"))
@@ -371,13 +410,13 @@ async def download_result(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Trabajo no encontrado")
-    
+
     zip_path = Path(job.get("zip_path", ""))
     if not zip_path.exists():
         raise HTTPException(status_code=404, detail="El archivo ZIP no está listo")
-        
+
     return FileResponse(
-        zip_path, 
+        zip_path,
         filename=zip_path.name,
         media_type="application/zip"
     )
@@ -394,20 +433,15 @@ async def inject_to_mo2(job_id: str, req: InjectRequest):
     if not build_dir.exists():
         raise HTTPException(status_code=400, detail="No hay archivos generados para inyectar")
 
-    target_mod_dir = Path(req.mo2_path) / req.mod_name
+    mod_name = _sanitize_name(req.mod_name)
+    target_mod_dir = Path(req.mo2_path) / mod_name
     if not target_mod_dir.is_dir():
         raise HTTPException(status_code=404, detail="Carpeta del mod en MO2 no encontrada")
 
     try:
-        for item in build_dir.iterdir():
-            target_dest = target_mod_dir / item.name
-            if item.is_dir():
-                shutil.copytree(item, target_dest, dirs_exist_ok=True)
-            else:
-                shutil.copy2(item, target_dest)
-                
+        await asyncio.to_thread(_copy_build_to_dir, build_dir, target_mod_dir)
         return {
-            "success": True, 
+            "success": True,
             "message": f"¡Traducción inyectada con éxito en {target_mod_dir}!"
         }
     except Exception as e:
