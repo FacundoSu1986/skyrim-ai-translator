@@ -428,41 +428,21 @@ h1 {
 }
 
 /* Master Rune Divider */
-.rune-divider {
+.rune-divider-wrapper {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  width: min(520px, 94%);
+  width: min(560px, 96%);
   margin: 14px auto 0;
-  color: var(--gold-1);
+  pointer-events: none;
 }
 
-.rune-line {
-  flex: 1;
-  height: 1px;
-  background:
-    linear-gradient(
-      90deg,
-      transparent,
-      rgba(223, 183, 88, 0.25) 20%,
-      rgba(223, 183, 88, 0.85)
-    );
-}
-
-.rune-line-right {
-  transform: scaleX(-1);
-}
-
-.rune-diamond {
-  font-size: 0.8rem;
-  opacity: 0.8;
-}
-
-.rune-knot {
-  font-family: 'Cinzel', serif;
-  font-size: 1.4rem;
-  text-shadow: 0 0 10px rgba(111, 227, 255, 0.4);
+.rune-divider-svg {
+  width: 100%;
+  height: auto;
+  max-height: 32px;
+  display: block;
+  filter: drop-shadow(0 0 12px rgba(111, 227, 255, 0.4));
 }
 
 .hero-rune {

@@ -1,4 +1,4 @@
-import dragonMedallionImg from '../assets/skyrim-ui/dragon-medallion.jpg';
+import dragonMedallionImg from '../assets/skyrim-ui/dragon-medallion.webp';
 
 export function DragonMedallion() {
   return (

@@ -1,11 +1,13 @@
+import runeDividerSvg from '../assets/skyrim-ui/rune-divider.svg';
+
 export function RuneDivider() {
   return (
-    <div className="rune-divider" aria-hidden="true">
-      <span className="rune-line rune-line-left" />
-      <span className="rune-diamond">◇</span>
-      <span className="rune-knot">ᛟ</span>
-      <span className="rune-diamond">◇</span>
-      <span className="rune-line rune-line-right" />
+    <div className="rune-divider-wrapper" aria-hidden="true" role="presentation">
+      <img
+        src={runeDividerSvg}
+        alt=""
+        className="rune-divider-svg"
+      />
     </div>
   );
 }
