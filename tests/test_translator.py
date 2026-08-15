@@ -129,6 +129,10 @@ def test_skyrim_glossary_entries():
     assert SKYRIM_GLOSSARY["Blackreach"] == "Límite Sombrío"
     assert SKYRIM_GLOSSARY["Soul Cairn"] == "Recordatorio de las Almas"
     assert SKYRIM_GLOSSARY["Sweetroll"] == "Bollo dulce"
+    assert SKYRIM_GLOSSARY["Solstheim"] == "Solstheim"
+    assert SKYRIM_GLOSSARY["Raven Rock"] == "Roca del Cuervo"
+    assert SKYRIM_GLOSSARY["Tel Mithryn"] == "Tel Mithryn"
+    assert SKYRIM_GLOSSARY["Skyforge"] == "Forja del Cielo"
 
 
 
