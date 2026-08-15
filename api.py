@@ -359,7 +359,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         # 2. Translation with Fail-Fast Contract
         await log_msg(f"🌐 Traduciendo al {target_lang}...", 35, "translate")
         if api_key:
-            translator_fn = create_openai_compatible_translator(api_key, api_base, model)
+            translator_fn = create_openai_compatible_translator(api_key, api_base, model, target_lang=target_lang)
             await log_msg(f"🧠 Conectado a LLM ({model})...", 40, "info")
         else:
             translator_fn = free_translator_callable

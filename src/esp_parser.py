@@ -37,38 +37,12 @@ DNAM_TEXT_RECORDS = {b"MGEF", b"RACE"}
 FLAG_COMPRESSED = 0x00040000
 RECORD_HEADER_SIZE = 24  # Skyrim standard record header length
 
-# Standard Skyrim Vanilla Master VoiceType FormIDs (from Skyrim.esm)
+# Verified canonical VoiceType FormIDs from Skyrim.esm base records (Creation Kit)
 VANILLA_VOICE_TYPES = {
-    "00013ADC": "FemaleCommander",
-    "00013ADE": "MaleNord",
-    "00013ADF": "FemaleYoungEager",
-    "00013AD6": "MaleEvenToned",
-    "00013AD7": "FemaleCoward",
-    "00013AD8": "MaleBrute",
-    "00013AD9": "MaleCondescending",
-    "00013ADA": "FemaleCondescending",
-    "00013ADB": "MaleCommoner",
-    "00013AD4": "FemaleEvenToned",
-    "00013AE0": "MaleCommonerAccented",
-    "00013AE1": "FemaleCommoner",
-    "00013AE2": "MaleChild",
-    "00013AE3": "FemaleChild",
-    "00013AE4": "FemaleElfHaughty",
-    "00013AE5": "MaleElfHaughty",
-    "00013AE6": "FemaleShrill",
-    "00013AE7": "MaleDarkElf",
-    "00013AE8": "FemaleDarkElf",
-    "00013AE9": "MaleArgonian",
-    "00013AEA": "FemaleArgonian",
-    "00013AEB": "MaleKhajiit",
-    "00013AEC": "FemaleKhajiit",
-    "00013AED": "MaleOrc",
-    "00013AEE": "FemaleOrc",
-    "00013AEF": "MaleOldKindly",
-    "00013AF0": "FemaleOldKindly",
-    "00013AF1": "MaleOldGrumpy",
-    "00013AF2": "FemaleOldGrumpy",
-    "0002F7C2": "MaleGuard",
+    "00013AD8": "MaleCommander",
+    "00013ADA": "MaleBrute",
+    "00013AE3": "FemaleCommander",
+    "00013AE6": "MaleNord",
 }
 
 
@@ -134,7 +108,9 @@ def parse_esp_file(filepath: str | Path) -> List[StringEntry]:
     """
     Parses a Skyrim Bethesda Plugin file (.esp, .esm, .esl) and extracts all
     translatable strings, quests, and dialogue responses into StringEntry items.
-    Follows the full speaker relation chain: INFO (ANAM) -> NPC_ (VTCK) -> VTYP (EDID).
+    Follows the speaker relation chain: INFO (ANAM) -> NPC_ (VTCK) -> VTYP (EDID).
+    When an NPC is defined only in an external master without local override,
+    it cleanly falls back to 'MaleNord' for dialogue lines.
     """
     path = Path(filepath)
     if not path.exists():
@@ -201,9 +177,13 @@ def parse_esp_file(filepath: str | Path) -> List[StringEntry]:
 
         if speaker_formid:
             actor_name = npc_to_name.get(speaker_formid, f"Actor_{speaker_formid}")
-            # Follow full relationship: INFO -> speaker NPC_ -> VTCK -> VoiceType name
-            target_vtck = npc_to_vtck.get(speaker_formid, speaker_formid)
-            voice_type = formid_to_edid.get(target_vtck) or VANILLA_VOICE_TYPES.get(target_vtck)
+            if speaker_formid in npc_to_vtck:
+                vtck = npc_to_vtck[speaker_formid]
+                voice_type = formid_to_edid.get(vtck) or VANILLA_VOICE_TYPES.get(vtck)
+            elif speaker_formid in formid_to_edid:
+                voice_type = formid_to_edid[speaker_formid]
+            elif speaker_formid in VANILLA_VOICE_TYPES:
+                voice_type = VANILLA_VOICE_TYPES[speaker_formid]
         elif direct_vtck:
             voice_type = formid_to_edid.get(direct_vtck) or VANILLA_VOICE_TYPES.get(direct_vtck)
 

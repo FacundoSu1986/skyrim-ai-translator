@@ -99,14 +99,14 @@ def test_esp_parser_full_speaker_resolution(tmp_path):
 
 def test_esp_parser_vanilla_master_voice_resolution(tmp_path):
     """
-    Validates resolution of vanilla Skyrim master VoiceType FormIDs (e.g. 0x00013AD8 -> 'MaleBrute').
+    Validates resolution of verified vanilla Skyrim master VoiceType FormIDs (0x00013ADA -> 'MaleBrute').
     """
     esp_path = tmp_path / "BanditQuest.esp"
     tes4_header = b"TES4" + struct.pack("<IIIIHH", 0, 0, 0, 0, 44, 0)
 
-    # NPC_ record with VTCK pointing to Skyrim.esm MaleBrute (0x00013AD8)
+    # NPC_ record with VTCK pointing to verified Skyrim.esm MaleBrute (0x00013ADA)
     npc_edid = b"EDID" + struct.pack("<H", 11) + b"BanditBoss\x00"
-    npc_vtck = b"VTCK" + struct.pack("<H", 4) + struct.pack("<I", 0x00013AD8)
+    npc_vtck = b"VTCK" + struct.pack("<H", 4) + struct.pack("<I", 0x00013ADA)
     npc_body = npc_edid + npc_vtck
     npc_rec = b"NPC_" + struct.pack("<IIIIHH", len(npc_body), 0, 0x00040004, 0, 44, 0) + npc_body
 
@@ -127,3 +127,31 @@ def test_esp_parser_vanilla_master_voice_resolution(tmp_path):
     assert dialog_entry.text == "Never should have come here!"
     assert dialog_entry.actor == "BanditBoss"
     assert dialog_entry.voice_type == "MaleBrute"
+
+
+def test_esp_parser_unresolved_master_npc_fallback(tmp_path):
+    """
+    Validates boundary behavior when an INFO record points via ANAM to an external master NPC
+    that is not defined or overridden locally in the plugin.
+    Cleanly falls back to 'MaleNord' for dialogue without crashing or corrupting data.
+    """
+    esp_path = tmp_path / "ExternalMasterNPC.esp"
+    tes4_header = b"TES4" + struct.pack("<IIIIHH", 0, 0, 0, 0, 44, 0)
+
+    # INFO record referencing master NPC FormID 0x0001A697 (not defined in this file)
+    text = b"May the gods watch over your battles, friend.\x00"
+    info_anam = b"ANAM" + struct.pack("<H", 4) + struct.pack("<I", 0x0001A697)
+    info_nam1 = b"NAM1" + struct.pack("<H", len(text)) + text
+    info_body = info_anam + info_nam1
+    info_rec = b"INFO" + struct.pack("<IIIIHH", len(info_body), 0, 0x00060006, 0, 44, 0) + info_body
+
+    grup_header = b"GRUP" + struct.pack("<I4sIII", 24 + len(info_rec), b"INFO", 0, 0, 0)
+    esp_path.write_bytes(tes4_header + grup_header + info_rec)
+
+    entries = parse_esp_file(esp_path)
+    assert len(entries) == 1
+    dialog_entry = entries[0]
+    assert dialog_entry.form_id == "00060006"
+    assert dialog_entry.actor == "Actor_0001A697"
+    assert dialog_entry.voice_type == "MaleNord"
+    assert dialog_entry.is_dialog is True

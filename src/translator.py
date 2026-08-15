@@ -50,29 +50,49 @@ SKYRIM_GLOSSARY = {
     "Sweetroll": "Bollo dulce",
 }
 
-def build_skyrim_system_prompt() -> str:
-    """Builds the expert Skyrim translation system prompt dynamically from SKYRIM_GLOSSARY."""
-    glossary_items = "\n".join(f"- {eng} -> {esp}" for eng, esp in SKYRIM_GLOSSARY.items())
+
+def _is_spanish(target_lang: str) -> bool:
+    normalized = (target_lang or "").strip().lower()
+    return normalized in {"spanish", "espanol", "español", "es"}
+
+
+def build_skyrim_system_prompt(target_lang: str = "Spanish") -> str:
+    """
+    Builds the expert Skyrim translation system prompt dynamically.
+    Includes the official Spanish lore glossary when target_lang is Spanish,
+    or instructs fidelity to medieval fantasy lore without Spanish glossary pollution for other languages.
+    """
+    if _is_spanish(target_lang):
+        glossary_items = "\n".join(f"- {eng} -> {esp}" for eng, esp in SKYRIM_GLOSSARY.items())
+        glossary_clause = f"1. Respeta estrictamente el lore y el siguiente glosario oficial de Skyrim:\n{glossary_items}\n"
+    else:
+        glossary_clause = (
+            f"1. Translate accurately into {target_lang}, preserving canonical Bethesda names, locations, and titles in their standard official {target_lang} or fantasy forms.\n"
+        )
+
     return (
-        "Eres un traductor experto y localizador profesional para The Elder Scrolls V: Skyrim.\n"
-        "Tu objetivo es traducir textos, nombres y diálogos manteniendo el tono medieval/fantástico y la coherencia con el doblaje y textos oficiales en español de España (o el idioma indicado).\n"
-        "Reglas:\n"
-        "1. Respeta estrictamente el lore y el siguiente glosario oficial de Skyrim:\n"
-        f"{glossary_items}\n"
-        "2. Conserva caracteres especiales de formato, placeholders ({...}, <...>), y etiquetas de Skyrim intactos.\n"
-        "3. Devuelve únicamente la traducción limpia, sin explicaciones ni comillas adicionales."
+        f"Eres un traductor experto y localizador profesional para The Elder Scrolls V: Skyrim.\n"
+        f"Tu objetivo es traducir textos, nombres y diálogos al idioma '{target_lang}' manteniendo el tono medieval/fantástico y la coherencia del doblaje oficial.\n"
+        f"Reglas:\n"
+        f"{glossary_clause}"
+        f"2. Conserva caracteres especiales de formato, placeholders ({{...}}, <...>), y etiquetas de Skyrim intactos.\n"
+        f"3. Devuelve únicamente la traducción limpia, sin explicaciones ni comillas adicionales."
     )
 
-SKYRIM_SYSTEM_PROMPT = build_skyrim_system_prompt()
+
+SKYRIM_SYSTEM_PROMPT = build_skyrim_system_prompt("Spanish")
+
 
 async def default_llm_call(text: str, context: str) -> str:
     """Default fallback translation function."""
     return f"Translated: {text}"
 
+
 def create_openai_compatible_translator(
     api_key: str,
     api_base: str = "https://api.openai.com/v1",
     model: str = "gpt-4o-mini",
+    target_lang: str = "Spanish",
 ) -> Callable[[str, str], Awaitable[str]]:
     """Creates an async translation callable targeting any OpenAI-compatible API (OpenAI, DeepSeek, Groq, Ollama, OpenRouter)."""
     async def _call(text: str, context: str) -> str:
@@ -84,28 +104,36 @@ def create_openai_compatible_translator(
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}" if api_key else ""
         }
-        
+
+        # Extract target_lang dynamically if provided in context
+        eff_target_lang = target_lang
+        if "Target language:" in context:
+            try:
+                eff_target_lang = context.split("Target language:")[1].split(".")[0].strip()
+            except Exception:
+                eff_target_lang = target_lang
+
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content": build_skyrim_system_prompt()},
+                {"role": "system", "content": build_skyrim_system_prompt(eff_target_lang)},
                 {"role": "user", "content": f"{context}\nTexto a traducir:\n{text}"}
             ],
             "temperature": 0.3
         }
-        
+
         def _request_sync():
             req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 return data["choices"][0]["message"]["content"].strip()
-                
+
         try:
             return await asyncio.to_thread(_request_sync)
         except Exception as e:
-            logger.error(f"Error calling LLM API ({url}): {e}")
+            logger.error("Error calling LLM API (%s): %s", url, e)
             raise RuntimeError(f"Fallo de la API de traducción ({url}): {e}") from e
-            
+
     return _call
 
 
