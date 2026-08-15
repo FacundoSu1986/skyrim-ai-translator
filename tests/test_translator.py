@@ -127,6 +127,7 @@ def test_skyrim_glossary_entries():
     assert SKYRIM_GLOSSARY["Dragonborn"] == "Sangre de Dragón"
     assert SKYRIM_GLOSSARY["Whiterun"] == "Carrera Blanca"
     assert SKYRIM_GLOSSARY["Blackreach"] == "Límite Sombrío"
+    assert SKYRIM_GLOSSARY["Soul Cairn"] == "Recordatorio de las Almas"
     assert SKYRIM_GLOSSARY["Sweetroll"] == "Bollo dulce"
 
 
