@@ -121,3 +121,103 @@ async def test_translate_entries_concurrency():
     assert max_active_calls > 1
 
 
+def test_skyrim_glossary_entries():
+    from src.translator import SKYRIM_GLOSSARY
+    assert "Dragonborn" in SKYRIM_GLOSSARY
+    assert SKYRIM_GLOSSARY["Dragonborn"] == "Sangre de Dragón"
+    assert SKYRIM_GLOSSARY["Whiterun"] == "Carrera Blanca"
+    assert SKYRIM_GLOSSARY["Blackreach"] == "Límite Sombrío"
+    assert SKYRIM_GLOSSARY["Soul Cairn"] == "Recordatorio de las Almas"
+    assert SKYRIM_GLOSSARY["Sweetroll"] == "Bollo dulce"
+    assert SKYRIM_GLOSSARY["Solstheim"] == "Solstheim"
+    assert SKYRIM_GLOSSARY["Raven Rock"] == "Roca del Cuervo"
+    assert SKYRIM_GLOSSARY["Tel Mithryn"] == "Tel Mithryn"
+    assert SKYRIM_GLOSSARY["Skyforge"] == "Forja del Cielo"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_translator_no_key():
+    from src.translator import create_openai_compatible_translator
+    fn = create_openai_compatible_translator(api_key="")
+    res = await fn("Sword", "Context: weapon")
+    assert res == "Traducido: Sword"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_translator_mock_success(monkeypatch):
+    import io
+    import json
+    from src.translator import create_openai_compatible_translator
+
+    fake_response_data = {
+        "choices": [{"message": {"content": "Espada de hierro"}}]
+    }
+
+    class MockResponse:
+        def __enter__(self):
+            return io.BytesIO(json.dumps(fake_response_data).encode("utf-8"))
+        def __exit__(self, *args):
+            pass
+
+    def mock_urlopen(req, timeout=30):
+        return MockResponse()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    fn = create_openai_compatible_translator(api_key="sk-test-key", api_base="https://api.openai.com/v1", model="gpt-4o-mini")
+    res = await fn("Iron Sword", "Context: weapon")
+    assert res == "Espada de hierro"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_translator_mock_error(monkeypatch):
+    from src.translator import create_openai_compatible_translator
+
+    def mock_urlopen_error(req, timeout=30):
+        raise urllib.error.URLError("Network unreachable")
+
+    import urllib.request
+    import urllib.error
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen_error)
+
+    fn = create_openai_compatible_translator(api_key="sk-test-key")
+    res = await fn("Iron Sword", "Context: weapon")
+    assert res == "Traducido: Iron Sword"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_translator_includes_glossary_in_payload(monkeypatch):
+    import io
+    import json
+    import urllib.request
+    from src.translator import create_openai_compatible_translator
+
+    captured_payload = None
+
+    class MockResponse:
+        def __enter__(self):
+            return io.BytesIO(json.dumps({"choices": [{"message": {"content": "Traducido"}}]}).encode("utf-8"))
+        def __exit__(self, *args):
+            pass
+
+    def mock_urlopen(req, timeout=30):
+        nonlocal captured_payload
+        captured_payload = json.loads(req.data.decode("utf-8"))
+        return MockResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    fn = create_openai_compatible_translator(api_key="sk-test-key")
+    await fn("Travel to Whiterun", "Context: Quest")
+
+    assert captured_payload is not None
+    system_msg = captured_payload["messages"][0]["content"]
+    assert "Whiterun -> Carrera Blanca" in system_msg
+    assert "Blackreach -> Límite Sombrío" in system_msg
+    assert "Soul Cairn -> Recordatorio de las Almas" in system_msg
+
+
+
+
+

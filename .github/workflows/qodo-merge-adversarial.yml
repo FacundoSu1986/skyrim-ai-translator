@@ -1,0 +1,125 @@
+name: "Qodo Merge - Revisor Adversarial Interactivo"
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+    paths-ignore:
+      - "**/*.png"
+      - "**/*.jpg"
+      - "**/*.svg"
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  auto-review:
+    name: "Auto-revisión en PR interno"
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.state == 'open' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: "Ejecutar Qodo Merge / PR-Agent"
+        uses: Codium-ai/pr-agent@570f67ed5fc8db5be74c18df070bc20079b64b0d # v0.41.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+  comment-command:
+    name: "Comando seguro en comentario"
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      github.event.issue.state == 'open' &&
+      github.event.comment.user.type != 'Bot' &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: "Validar comando permitido"
+        id: gate
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          body="${COMMENT_BODY//$'\r'/}"
+
+          deny() {
+            echo "gate: rechazado — $1" >&2
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          first_line="${body%%$'\n'*}"
+          first_line="${first_line#"${first_line%%[![:space:]]*}"}"
+          first_line="${first_line%"${first_line##*[![:space:]]}"}"
+
+          # Ninguna línea del comentario puede contener un flag "--..." para evitar overrides arbitrarios
+          while IFS= read -r line; do
+            case "$line" in
+              *--*) deny "argumentos '--clave=valor' no permitidos (override de configuración)" ;;
+            esac
+          done <<< "$body"
+
+          case "$first_line" in
+            /review|/describe)
+              # Sin argumentos: exigir que sea la única línea con contenido real
+              extra="$(printf '%s\n' "$body" | grep -c '[^[:space:]]' || true)"
+              if [ "$extra" -ne 1 ]; then
+                deny "$first_line debe ser la única línea del comentario"
+              fi
+              ;;
+            "/ask "*)
+              # /ask admite preguntas multilínea
+              ;;
+            *)
+              deny "comando no permitido"
+              ;;
+          esac
+
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: "Verificar que el PR no es de un fork"
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEAD_REPO="$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json headRepositoryOwner,headRepository \
+            --jq '.headRepositoryOwner.login + "/" + .headRepository.name')"
+          if [[ "$HEAD_REPO" != "$REPO" ]]; then
+            echo "PR desde fork ($HEAD_REPO): revisión por comentario deshabilitada." >&2
+            exit 1
+          fi
+
+      - name: "Ejecutar Qodo Merge / PR-Agent"
+        if: steps.gate.outputs.run == 'true'
+        uses: Codium-ai/pr-agent@570f67ed5fc8db5be74c18df070bc20079b64b0d # v0.41.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

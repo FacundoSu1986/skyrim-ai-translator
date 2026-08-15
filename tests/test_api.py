@@ -6,6 +6,39 @@ from api import app, jobs
 
 client = TestClient(app)
 
+def test_health_check():
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert "active_jobs" in data
+    assert "available_voices" in data
+    assert data["service"] == "skyrim-ai-translator-api"
+
+
+def test_health_active_jobs_counting():
+    """Verify active_jobs strictly counts 'pending' and 'processing' states, excluding 'completed' and 'failed'."""
+    original_jobs = dict(jobs)
+    try:
+        jobs.clear()
+        # Arrange
+        jobs["job_1"] = {"status": "pending"}
+        jobs["job_2"] = {"status": "processing"}
+        jobs["job_3"] = {"status": "completed"}
+        jobs["job_4"] = {"status": "failed"}
+
+        # Act
+        response = client.get("/api/health")
+
+        # Assert
+        assert response.status_code == 200
+        data = response.json()
+        assert data["active_jobs"] == 2
+    finally:
+        jobs.clear()
+        jobs.update(original_jobs)
+
+
 def test_get_voices():
     response = client.get("/api/voices")
     assert response.status_code == 200
@@ -67,3 +100,29 @@ def test_mo2_start_and_inject(tmp_path):
     assert res_inject.status_code == 200
     assert res_inject.json()["success"] is True
     assert (mod_folder / "test_file.txt").exists()
+
+
+def test_auto_detect_mo2_fallback(monkeypatch):
+    """Verify MO2 auto-detection fallback returns found=False and empty mods deterministically when paths do not exist."""
+    import api
+
+    # Arrange
+    monkeypatch.setattr(api.os.path, "isdir", lambda p: False)
+
+    # Act
+    response = client.get("/api/mo2/auto-detect")
+
+    # Assert
+    assert response.status_code == 200
+    data = response.json()
+    assert data["found"] is False
+    assert data["mods"] == []
+
+
+def test_inject_invalid_job():
+    res = client.post("/api/mo2/inject/non_existent_id", json={
+        "mo2_path": "C:\\mods",
+        "mod_name": "AnyMod"
+    })
+    assert res.status_code == 404
+
