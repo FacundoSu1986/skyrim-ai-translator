@@ -177,3 +177,4 @@ def parse_esp_file(
 13. **Test 13 (Master TPLT Inheritance):** Verifies `NPC_` in mod $\to$ `TPLT` in `MasterA.esm` $\to$ `VTCK` in `Skyrim.esm`.
 14. **Test 14 (TPLT Cycle Protection):** Verifies cyclic template references (`NPC A <-> NPC B`) terminate safely with `voice_type is None`.
 15. **Test 15 (Localized StringID Guard):** Verifies that localized plugins (`FLAG_LOCALIZED = 0x80`) ignore 4-byte StringIDs in `FULL` and safely resolve via `EDID` or `Actor_<FormID>`.
+16. **Test 16 (Missing Master Warning Suppression & Negative Cache):** Verifies that referencing an absent master across 500 records triggers exactly 1 discovery scan, emits exactly 1 warning, and safely resolves with `voice_type is None`.

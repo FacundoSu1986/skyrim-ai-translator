@@ -723,3 +723,55 @@ def test_esp_parser_localized_plugin_stringid_guard(tmp_path):
     # NPC 2: without EDID, should fall back to Actor_00020002, NOT raw 4-byte StringID "KING"
     assert dialog2.actor == "Actor_00020002"
     assert dialog2.voice_type == "MaleCommander"
+
+
+def test_esp_parser_missing_master_repeated_warning_suppression(tmp_path, caplog, monkeypatch):
+    """
+    Test 16 (Missing Master Warning Suppression & Negative Cache):
+    When a mod contains 500 dialogue records referencing an absent master,
+    the resolver must:
+      - Perform exactly 1 filesystem discovery scan for the missing master.
+      - Emit exactly 1 missing-master warning in logs (suppressing 499 duplicate warnings).
+      - Gracefully set voice_type=None on all entries without raising any exception.
+    """
+    import logging
+
+    # Build 500 INFO records in target mod pointing to an NPC in MissingMaster.esm
+    info_recs = b""
+    for i in range(500):
+        info_body = (
+            make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) +
+            make_subrecord(b"NAM1", f"Missing master line {i}\x00".encode("utf-8"))
+        )
+        info_recs += make_record(b"INFO", 0x01000000 + i, info_body)
+
+    mod_esp = tmp_path / "ModWithMissingMaster.esp"
+    mod_esp.write_bytes(make_tes4_header(["MissingMaster.esm"]) + make_grup(b"INFO", info_recs))
+
+    orig_find_master = MasterResolver.find_master_file
+    discovery_scan_count = 0
+
+    def instrumented_find_master(self, master_name, origin_dir):
+        nonlocal discovery_scan_count
+        cache_key = (origin_dir.resolve(), master_name.lower())
+        if cache_key not in self._path_cache:
+            discovery_scan_count += 1
+        return orig_find_master(self, master_name, origin_dir)
+
+    monkeypatch.setattr(MasterResolver, "find_master_file", instrumented_find_master)
+
+    with caplog.at_level(logging.WARNING):
+        entries = parse_esp_file(mod_esp)
+
+    assert len(entries) == 500
+    assert discovery_scan_count == 1, f"Expected 1 discovery scan, got {discovery_scan_count}"
+
+    missing_warnings = [
+        rec.message for rec in caplog.records
+        if "missingmaster.esm" in rec.message.lower() and "could not be found" in rec.message
+    ]
+    assert len(missing_warnings) == 1, f"Expected exactly 1 missing master warning, got {len(missing_warnings)}"
+
+    for e in entries:
+        assert e.voice_type is None
+        assert e.actor == "Actor_00010001"

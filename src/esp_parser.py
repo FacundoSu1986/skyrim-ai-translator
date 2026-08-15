@@ -225,6 +225,12 @@ class MasterResolver:
             except OSError as err:
                 logger.warning("Error accessing master search directory %s: %s", directory, err)
 
+        if found_path is None:
+            logger.warning(
+                "Master file '%s' could not be found in search paths (origin: %s)",
+                master_name, origin_dir
+            )
+
         self._path_cache[cache_key] = found_path
         return found_path
 
@@ -232,10 +238,6 @@ class MasterResolver:
         """Loads and indexes master records in read-only mode, with in-memory caching."""
         master_path = self.find_master_file(master_name, origin_dir)
         if not master_path:
-            logger.warning(
-                "Master file '%s' could not be found in search paths (origin: %s)",
-                master_name, origin_dir
-            )
             return None
 
         resolved_path = master_path.resolve()
@@ -350,10 +352,6 @@ def _find_npc_data(
             origin_data.masters,
         )
 
-    logger.warning(
-        "Could not resolve NPC %s: origin master '%s' not available",
-        npc_key, npc_key.plugin
-    )
     return None, None, None, npc_key.plugin, []
 
 
