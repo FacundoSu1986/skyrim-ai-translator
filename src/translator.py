@@ -50,13 +50,20 @@ SKYRIM_GLOSSARY = {
     "Sweetroll": "Bollo dulce",
 }
 
-SKYRIM_SYSTEM_PROMPT = """Eres un traductor experto y localizador profesional para The Elder Scrolls V: Skyrim.
-Tu objetivo es traducir textos, nombres y diálogos manteniendo el tono medieval/fantástico y la coherencia con el doblaje y textos oficiales en español de España (o el idioma indicado).
-Reglas:
-1. Respeta el lore de Skyrim y su glosario oficial (ej: Dragonborn -> Sangre de Dragón, Whiterun -> Carrera Blanca, Thane -> Thane, Jarl -> Jarl).
-2. Conserva caracteres especiales de formato, placeholders ({...}, <...>), y etiquetas de Skyrim intactos.
-3. Devuelve únicamente la traducción limpia, sin explicaciones ni comillas adicionales.
-"""
+def build_skyrim_system_prompt() -> str:
+    """Builds the expert Skyrim translation system prompt dynamically from SKYRIM_GLOSSARY."""
+    glossary_items = "\n".join(f"- {eng} -> {esp}" for eng, esp in SKYRIM_GLOSSARY.items())
+    return (
+        "Eres un traductor experto y localizador profesional para The Elder Scrolls V: Skyrim.\n"
+        "Tu objetivo es traducir textos, nombres y diálogos manteniendo el tono medieval/fantástico y la coherencia con el doblaje y textos oficiales en español de España (o el idioma indicado).\n"
+        "Reglas:\n"
+        "1. Respeta estrictamente el lore y el siguiente glosario oficial de Skyrim:\n"
+        f"{glossary_items}\n"
+        "2. Conserva caracteres especiales de formato, placeholders ({...}, <...>), y etiquetas de Skyrim intactos.\n"
+        "3. Devuelve únicamente la traducción limpia, sin explicaciones ni comillas adicionales."
+    )
+
+SKYRIM_SYSTEM_PROMPT = build_skyrim_system_prompt()
 
 async def default_llm_call(text: str, context: str) -> str:
     """Default fallback translation function."""
@@ -81,7 +88,7 @@ def create_openai_compatible_translator(
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content": SKYRIM_SYSTEM_PROMPT},
+                {"role": "system", "content": build_skyrim_system_prompt()},
                 {"role": "user", "content": f"{context}\nTexto a traducir:\n{text}"}
             ],
             "temperature": 0.3

@@ -16,6 +16,29 @@ def test_health_check():
     assert data["service"] == "skyrim-ai-translator-api"
 
 
+def test_health_active_jobs_counting():
+    """Verify active_jobs strictly counts 'pending' and 'processing' states, excluding 'completed' and 'failed'."""
+    original_jobs = dict(jobs)
+    try:
+        jobs.clear()
+        # Arrange
+        jobs["job_1"] = {"status": "pending"}
+        jobs["job_2"] = {"status": "processing"}
+        jobs["job_3"] = {"status": "completed"}
+        jobs["job_4"] = {"status": "failed"}
+
+        # Act
+        response = client.get("/api/health")
+
+        # Assert
+        assert response.status_code == 200
+        data = response.json()
+        assert data["active_jobs"] == 2
+    finally:
+        jobs.clear()
+        jobs.update(original_jobs)
+
+
 def test_get_voices():
     response = client.get("/api/voices")
     assert response.status_code == 200

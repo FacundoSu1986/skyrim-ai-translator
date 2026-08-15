@@ -63,10 +63,14 @@ class InjectRequest(BaseModel):
 
 @app.get("/api/health")
 async def health_check():
-    """Returns server health status, active jobs, and system capabilities."""
+    """Returns server health status, active jobs (pending or processing), and system capabilities."""
+    active_count = sum(
+        1 for j in jobs.values()
+        if isinstance(j, dict) and j.get("status") in {"pending", "processing"}
+    )
     return {
         "status": "healthy",
-        "active_jobs": len(jobs),
+        "active_jobs": active_count,
         "available_voices": len(AVAILABLE_VOICES),
         "service": "skyrim-ai-translator-api",
         "version": "1.0.0"

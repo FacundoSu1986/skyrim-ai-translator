@@ -186,5 +186,38 @@ async def test_openai_compatible_translator_mock_error(monkeypatch):
     assert res == "Traducido: Iron Sword"
 
 
+@pytest.mark.asyncio
+async def test_openai_compatible_translator_includes_glossary_in_payload(monkeypatch):
+    import io
+    import json
+    import urllib.request
+    from src.translator import create_openai_compatible_translator
+
+    captured_payload = None
+
+    class MockResponse:
+        def __enter__(self):
+            return io.BytesIO(json.dumps({"choices": [{"message": {"content": "Traducido"}}]}).encode("utf-8"))
+        def __exit__(self, *args):
+            pass
+
+    def mock_urlopen(req, timeout=30):
+        nonlocal captured_payload
+        captured_payload = json.loads(req.data.decode("utf-8"))
+        return MockResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    fn = create_openai_compatible_translator(api_key="sk-test-key")
+    await fn("Travel to Whiterun", "Context: Quest")
+
+    assert captured_payload is not None
+    system_msg = captured_payload["messages"][0]["content"]
+    assert "Whiterun -> Carrera Blanca" in system_msg
+    assert "Blackreach -> Límite Sombrío" in system_msg
+    assert "Soul Cairn -> Recordatorio de las Almas" in system_msg
+
+
+
 
 
