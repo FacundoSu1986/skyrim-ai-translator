@@ -77,3 +77,21 @@ def test_mo2_start_and_inject(tmp_path):
     assert res_inject.status_code == 200
     assert res_inject.json()["success"] is True
     assert (mod_folder / "test_file.txt").exists()
+
+
+def test_auto_detect_mo2_fallback():
+    response = client.get("/api/mo2/auto-detect")
+    assert response.status_code == 200
+    data = response.json()
+    assert "found" in data
+    if not data["found"]:
+        assert data["mods"] == []
+
+
+def test_inject_invalid_job():
+    res = client.post("/api/mo2/inject/non_existent_id", json={
+        "mo2_path": "C:\\mods",
+        "mod_name": "AnyMod"
+    })
+    assert res.status_code == 404
+

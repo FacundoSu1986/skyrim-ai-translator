@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 32" width="600" height="32" fill="none">
+  <defs>
+    <linearGradient id="goldFade" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#dfb758" stop-opacity="0" />
+      <stop offset="20%" stop-color="#dfb758" stop-opacity="0.3" />
+      <stop offset="45%" stop-color="#dfb758" stop-opacity="0.9" />
+      <stop offset="50%" stop-color="#fff4d0" stop-opacity="1" />
+      <stop offset="55%" stop-color="#dfb758" stop-opacity="0.9" />
+      <stop offset="80%" stop-color="#dfb758" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#dfb758" stop-opacity="0" />
+    </linearGradient>
+    <linearGradient id="iceGlow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#6fe3ff" />
+      <stop offset="100%" stop-color="#145f85" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Left Line Segment -->
+  <line x1="10" y1="16" x2="240" y2="16" stroke="url(#goldFade)" stroke-width="1.5" />
+  <line x1="40" y1="13" x2="230" y2="13" stroke="url(#goldFade)" stroke-width="0.75" stroke-dasharray="8 4" opacity="0.6" />
+  <line x1="40" y1="19" x2="230" y2="19" stroke="url(#goldFade)" stroke-width="0.75" stroke-dasharray="8 4" opacity="0.6" />
+
+  <!-- Right Line Segment -->
+  <line x1="360" y1="16" x2="590" y2="16" stroke="url(#goldFade)" stroke-width="1.5" />
+  <line x1="370" y1="13" x2="560" y2="13" stroke="url(#goldFade)" stroke-width="0.75" stroke-dasharray="8 4" opacity="0.6" />
+  <line x1="370" y1="19" x2="560" y2="19" stroke="url(#goldFade)" stroke-width="0.75" stroke-dasharray="8 4" opacity="0.6" />
+
+  <!-- Side Rune Accents -->
+  <path d="M 220 10 L 226 16 L 220 22 L 214 16 Z" fill="none" stroke="#dfb758" stroke-width="1.2" opacity="0.7" />
+  <path d="M 380 10 L 386 16 L 380 22 L 374 16 Z" fill="none" stroke="#dfb758" stroke-width="1.2" opacity="0.7" />
+
+  <!-- Center Knotwork / Rune Sigil -->
+  <g transform="translate(300, 16)" filter="url(#glow)">
+    <!-- Outer Diamond -->
+    <polygon points="0,-14 18,0 0,14 -18,0" fill="#080c10" stroke="url(#iceGlow)" stroke-width="1.5" />
+    <!-- Inner Diamond -->
+    <polygon points="0,-9 11,0 0,9 -11,0" fill="#0a1822" stroke="#dfb758" stroke-width="1.2" />
+    <!-- Center Runic Glyph (Othala / Protection) -->
+    <path d="M -5 5 L 0 -5 L 5 5 L 0 0 Z M -5 5 L -8 9 M 5 5 L 8 9" stroke="#6fe3ff" stroke-width="1.6" stroke-linecap="round" fill="none" />
+    <!-- Flanking Dots -->
+    <circle cx="-32" cy="0" r="2.5" fill="#dfb758" />
+    <circle cx="32" cy="0" r="2.5" fill="#dfb758" />
+    <circle cx="-45" cy="0" r="1.5" fill="#6fe3ff" />
+    <circle cx="45" cy="0" r="1.5" fill="#6fe3ff" />
+  </g>
+</svg>

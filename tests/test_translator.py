@@ -135,4 +135,56 @@ def test_skyrim_glossary_entries():
     assert SKYRIM_GLOSSARY["Skyforge"] == "Forja del Cielo"
 
 
+@pytest.mark.asyncio
+async def test_openai_compatible_translator_no_key():
+    from src.translator import create_openai_compatible_translator
+    fn = create_openai_compatible_translator(api_key="")
+    res = await fn("Sword", "Context: weapon")
+    assert res == "Traducido: Sword"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_translator_mock_success(monkeypatch):
+    import io
+    import json
+    from src.translator import create_openai_compatible_translator
+
+    fake_response_data = {
+        "choices": [{"message": {"content": "Espada de hierro"}}]
+    }
+
+    class MockResponse:
+        def __enter__(self):
+            return io.BytesIO(json.dumps(fake_response_data).encode("utf-8"))
+        def __exit__(self, *args):
+            pass
+
+    def mock_urlopen(req, timeout=30):
+        return MockResponse()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    fn = create_openai_compatible_translator(api_key="sk-test-key", api_base="https://api.openai.com/v1", model="gpt-4o-mini")
+    res = await fn("Iron Sword", "Context: weapon")
+    assert res == "Espada de hierro"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_translator_mock_error(monkeypatch):
+    from src.translator import create_openai_compatible_translator
+
+    def mock_urlopen_error(req, timeout=30):
+        raise urllib.error.URLError("Network unreachable")
+
+    import urllib.request
+    import urllib.error
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen_error)
+
+    fn = create_openai_compatible_translator(api_key="sk-test-key")
+    res = await fn("Iron Sword", "Context: weapon")
+    assert res == "Traducido: Iron Sword"
+
+
+
 

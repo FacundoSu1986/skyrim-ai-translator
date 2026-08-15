@@ -8,9 +8,17 @@ def test_voice_mapper():
     assert resolve_voice_for_entry("MaleNord") == "es-ES-AlvaroNeural"
     assert resolve_voice_for_entry("FemaleElf") == "es-ES-ElviraNeural"
     assert resolve_voice_for_entry("MaleChild") == "es-ES-DarioNeural"
+    assert resolve_voice_for_entry("UnknownFemaleNPC") == "es-ES-ElviraNeural"
+    assert resolve_voice_for_entry("YoungKidBoy") == "es-ES-DarioNeural"
+    assert resolve_voice_for_entry("TownGuardMan") == "es-ES-AlvaroNeural"
+    assert resolve_voice_for_entry("RandomCreatureXYZ", default_fallback="es-MX-JorgeNeural") == "es-MX-JorgeNeural"
     assert resolve_voice_for_entry(None, default_fallback="es-ES-AlvaroNeural") == "es-ES-AlvaroNeural"
 
 def test_free_translator_glossary():
+    # Empty string handling
+    assert translate_free_text_sync("") == ""
+    assert translate_free_text_sync("   ") == "   "
+
     result = translate_free_text_sync("The Dragonborn travels to Whiterun to meet the Jarl.")
     assert "Sangre de Dragón" in result or "Dragonborn" in result
     assert "Carrera Blanca" in result or "Whiterun" in result
