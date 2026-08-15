@@ -36,6 +36,7 @@ INTERESTING_SUBRECORDS = {b"FULL", b"DESC", b"NAM1", b"NNAM", b"RNAM", b"SHRT"}
 DNAM_TEXT_RECORDS = {b"MGEF", b"RACE"}
 
 FLAG_COMPRESSED = 0x00040000
+FLAG_LOCALIZED = 0x00000080
 RECORD_HEADER_SIZE = 24  # Skyrim standard record header length
 
 
@@ -46,7 +47,7 @@ def _norm_plugin(name: str) -> str:
 
 def _is_valid_text(s: str) -> bool:
     """
-    Basic sanity check to filter out non-printable binary data or raw localized StringIDs.
+    Basic sanity check to filter out non-printable binary data.
     Note: This is a defensive filter and does not constitute full .STRINGS localization support.
     """
     if not s or not s.strip():
@@ -188,19 +189,28 @@ class MasterIndexData:
 class MasterResolver:
     """
     Lightweight read-only resolver and cache for Skyrim master files.
-    Opens master files strictly for reading ('rb') and caches their index.
+    Opens master files strictly for reading ('rb') and caches both master file paths
+    and their indexed data.
     """
 
     def __init__(self, search_paths: Optional[Sequence[Path | str]] = None):
         self.search_paths: list[Path] = [
             Path(p) for p in (search_paths or []) if Path(p).is_dir()
         ]
+        self._path_cache: dict[tuple[Path, str], Optional[Path]] = {}
         self._cache: dict[Path, MasterIndexData] = {}
 
     def find_master_file(self, master_name: str, origin_dir: Path) -> Optional[Path]:
-        """Locates a master file case-insensitively in origin_dir or search_paths."""
+        """Locates a master file case-insensitively in origin_dir or search_paths, with caching."""
+        origin_resolved = origin_dir.resolve()
         target_lower = _norm_plugin(master_name)
+        cache_key = (origin_resolved, target_lower)
+
+        if cache_key in self._path_cache:
+            return self._path_cache[cache_key]
+
         search_dirs = [origin_dir] + [p for p in self.search_paths if p != origin_dir]
+        found_path: Optional[Path] = None
 
         for directory in search_dirs:
             if not directory.is_dir():
@@ -208,10 +218,15 @@ class MasterResolver:
             try:
                 for entry in directory.iterdir():
                     if entry.is_file() and _norm_plugin(entry.name) == target_lower:
-                        return entry
+                        found_path = entry
+                        break
+                if found_path is not None:
+                    break
             except OSError as err:
                 logger.warning("Error accessing master search directory %s: %s", directory, err)
-        return None
+
+        self._path_cache[cache_key] = found_path
+        return found_path
 
     def get_or_load_master(self, master_name: str, origin_dir: Path) -> Optional[MasterIndexData]:
         """Loads and indexes master records in read-only mode, with in-memory caching."""
@@ -238,11 +253,14 @@ class MasterResolver:
             logger.warning("Master file %s is invalid or does not start with TES4 header", resolved_path)
             return None
 
-        # Extract declared masters in the master's own TES4 header
+        # Extract declared masters and localized status in the master's own TES4 header
         masters: list[str] = []
-        for tag, _flags, _form_id_val, _form_id_hex, body in _iter_records(data):
+        is_localized = False
+        for tag, flags, _form_id_val, _form_id_hex, body in _iter_records(data):
             if tag == b"TES4":
                 masters = _extract_masters_from_tes4(body)
+                if flags & FLAG_LOCALIZED:
+                    is_localized = True
                 break
 
         plugin_name = master_path.name
@@ -268,7 +286,7 @@ class MasterResolver:
                 for s_type, payload in _read_subrecords(body):
                     if s_type == b"EDID" and payload:
                         edid = _decode_string(payload).strip()
-                    elif s_type == b"FULL" and payload:
+                    elif s_type == b"FULL" and payload and not is_localized:
                         full_name = _decode_string(payload).strip()
                     elif s_type == b"VTCK" and len(payload) >= 4:
                         vtck_formid = int.from_bytes(payload[:4], "little")
@@ -441,11 +459,14 @@ def parse_esp_file(
     if sig != b"TES4":
         logger.warning(f"File {path.name} does not start with TES4 header (got {sig})")
 
-    # Extract declared masters in order from TES4 header
+    # Extract declared masters and localized status in order from TES4 header
     local_masters: list[str] = []
-    for tag, _flags, _form_id_val, _form_id_hex, body in _iter_records(data):
+    is_localized = False
+    for tag, flags, _form_id_val, _form_id_hex, body in _iter_records(data):
         if tag == b"TES4":
             local_masters = _extract_masters_from_tes4(body)
+            if flags & FLAG_LOCALIZED:
+                is_localized = True
             break
 
     plugin_name = path.name
@@ -474,7 +495,7 @@ def parse_esp_file(
             for s_type, payload in _read_subrecords(body):
                 if s_type == b"EDID" and payload:
                     edid = _decode_string(payload).strip()
-                elif s_type == b"FULL" and payload:
+                elif s_type == b"FULL" and payload and not is_localized:
                     full_name = _decode_string(payload).strip()
                 elif s_type == b"VTCK" and len(payload) >= 4:
                     vtck_formid = int.from_bytes(payload[:4], "little")
@@ -500,7 +521,6 @@ def parse_esp_file(
             continue
 
         speaker_formid: Optional[int] = None
-        direct_vtck: Optional[int] = None
 
         if tag == b"INFO":
             for s_type, payload in _read_subrecords(body):
@@ -529,16 +549,6 @@ def parse_esp_file(
                 voice_type = resolved_voice
             else:
                 actor_name = f"Actor_{speaker_formid:08X}"
-
-        elif direct_vtck is not None:
-            vtck_key = _resolve_record_key(direct_vtck, plugin_name, local_masters)
-            if vtck_key is not None:
-                if vtck_key.plugin == _norm_plugin(plugin_name):
-                    voice_type = local_vtyp_to_edid.get(vtck_key)
-                else:
-                    origin_vtyp_data = master_resolver.get_or_load_master(vtck_key.plugin, path.parent)
-                    if origin_vtyp_data:
-                        voice_type = origin_vtyp_data.vtyp_to_edid.get(vtck_key)
 
         if tag == b"NPC_" and not actor_name:
             rec_key = _resolve_record_key(form_id_val, plugin_name, local_masters)

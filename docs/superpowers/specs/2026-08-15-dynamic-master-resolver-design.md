@@ -69,6 +69,13 @@ When an `NPC_` record lacks a direct `VTCK` (VoiceType FormID), the resolver ins
 - If neither `VTCK` nor a valid template chain resolves, returns `voice_type = None` cleanly.
 - **Note on Bethesda Template Flags:** The resolver traverses `TPLT` relationships directly without fully parsing `ACBS`/`DNAM` inheritance bitmasks ("Use Traits" `0x00000001`). This is documented as a conservative limitation.
 
+### 2.5 Localized Plugin Guard (`FLAG_LOCALIZED`)
+
+When a plugin has `FLAG_LOCALIZED = 0x00000080` set in its `TES4` record flags:
+- Subrecords like `FULL` store 4-byte `uint32` StringIDs pointing to external `.STRINGS` tables, rather than inline text.
+- The parser guards against treating 4-byte StringIDs as raw actor names, falling back to `EDID` or `Actor_<FormID>`.
+- Native `.STRINGS` file decompression is deferred to a future phase.
+
 ---
 
 ## 3. Component Design
@@ -88,21 +95,25 @@ class MasterIndexData:
     vtyp_to_edid: dict[RecordKey, str]         # RecordKey(VTYP) -> EDID string (e.g. "FemaleCommander")
 ```
 
-### 3.2 `MasterResolver` & Read-Only Cache
+### 3.2 `MasterResolver` & Two-Tier Read-Only Cache
 
 ```python
 class MasterResolver:
     def __init__(self, search_paths: Sequence[Path | str] | None = None):
         self.search_paths: list[Path] = [Path(p) for p in (search_paths or []) if Path(p).is_dir()]
+        self._path_cache: dict[tuple[Path, str], Path | None] = {}
         self._cache: dict[Path, MasterIndexData] = {}
+
+    def find_master_file(self, master_name: str, origin_dir: Path) -> Path | None:
+        ...
 
     def get_or_load_master(self, master_name: str, origin_dir: Path) -> MasterIndexData | None:
         ...
 ```
 
-- **File Discovery:** Searches `[origin_dir] + self.search_paths` case-insensitively.
+- **File Discovery & Cache:** Searches `[origin_dir] + self.search_paths` case-insensitively. The resolved path (or `None` if missing) is cached in `_path_cache` under `(origin_dir.resolve(), normalized_name)` to prevent redundant filesystem scans and warning spam.
 - **Read-Only Guarantee:** Files are opened strictly with `"rb"`. No master bytes are written or modified.
-- **Cache Efficiency:** Master files are parsed at most once per `MasterResolver` instance.
+- **Data Index Cache:** Parsed master record data is cached in `_cache` by canonical resolved path.
 
 ### 3.3 Public API
 
@@ -136,14 +147,15 @@ def parse_esp_file(
 - Transitive master references (`Mod -> Update.esm -> Skyrim.esm`).
 - `TPLT` template actor inheritance traversal.
 - Cycle and pathological depth protection (`visited` set + `max_depth = 10`).
-- Instrumented in-memory read-only master caching.
+- Two-tier in-memory read-only master caching (filesystem discovery cache + index data cache).
+- `FLAG_LOCALIZED` detection to guard against interpreting binary StringIDs as actor names.
 
 ### Not Supported (Deferred)
 - Effective MO2 / plugin load order.
 - WinningOverride across arbitrary load order.
 - ESL / Light plugin (`0xFE...`) FormID resolution.
 - Complete Bethesda template inheritance flags (`ACBS`/`DNAM` bitmasks).
-- Localized plugin strings (`.STRINGS` / `.DLSTRINGS` / `.ILSTRINGS`).
+- Localized plugin strings parsing (`.STRINGS` / `.DLSTRINGS` / `.ILSTRINGS`).
 - Automatic runtime master discovery (MO2 VFS / registry scanning).
 
 ---
@@ -158,9 +170,10 @@ def parse_esp_file(
 6. **Test 6 (Missing Master Safe Fallback):** `MyMod.esp` references missing master $\to$ `voice_type is None`, warnings logged, no exceptions.
 7. **Test 7 (Invalid Master Index):** FormID with out-of-range master index $\to$ returns `None`, never treated as local.
 8. **Test 8 (Master Immutability):** Verifies master file SHA256 hash before and after parsing to ensure 0 byte modifications.
-9. **Test 9 (Master Cache Performance):** Verifies single read/parse when 500 dialogue records reference the same master via runtime instrumentation.
+9. **Test 9 (Master Cache Performance):** Verifies 1 filesystem discovery scan and 1 disk parse when 500 dialogue records reference the same master via runtime instrumentation.
 10. **Test 10 (ESL / Light Detection):** Verifies `0xFE...` FormIDs are detected and safely return `None` with an explicit warning.
 11. **Test 11 (Origin-Record Resolution & No MAST-Order Override):** Verifies that FormID references resolve to their origin plugin, and that `MAST` declaration order is NOT used as an arbitrary override heuristic.
 12. **Test 12 (Local TPLT Inheritance):** Verifies `NPC_ (Instance)` $\to$ `TPLT` $\to$ `NPC_ (Template)` $\to$ `VTCK` $\to$ `VTYP`.
 13. **Test 13 (Master TPLT Inheritance):** Verifies `NPC_` in mod $\to$ `TPLT` in `MasterA.esm` $\to$ `VTCK` in `Skyrim.esm`.
 14. **Test 14 (TPLT Cycle Protection):** Verifies cyclic template references (`NPC A <-> NPC B`) terminate safely with `voice_type is None`.
+15. **Test 15 (Localized StringID Guard):** Verifies that localized plugins (`FLAG_LOCALIZED = 0x80`) ignore 4-byte StringIDs in `FULL` and safely resolve via `EDID` or `Actor_<FormID>`.

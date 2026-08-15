@@ -21,13 +21,13 @@ def make_grup(label: bytes, records: bytes) -> bytes:
     return b"GRUP" + struct.pack("<I4sIII", 24 + len(records), label, 0, 0, 0) + records
 
 
-def make_tes4_header(masters: list[str] = ()) -> bytes:
-    """Helper to build a TES4 header record with declared MAST subrecords."""
+def make_tes4_header(masters: list[str] = (), flags: int = 0) -> bytes:
+    """Helper to build a TES4 header record with declared MAST subrecords and flags."""
     body = b""
     for m in masters:
         body += make_subrecord(b"MAST", m.encode("utf-8") + b"\x00")
         body += make_subrecord(b"DATA", struct.pack("<Q", 0))
-    return make_record(b"TES4", 0, body)
+    return make_record(b"TES4", 0, body, flags=flags)
 
 
 def test_voice_mapper():
@@ -425,9 +425,18 @@ def test_esp_parser_master_cache_single_parse(tmp_path, monkeypatch):
     mod_esp = tmp_path / "BigQuest.esp"
     mod_esp.write_bytes(make_tes4_header(["CachedMaster.esm"]) + make_grup(b"INFO", info_recs))
 
-    # Instrument MasterResolver.get_or_load_master to count actual disk parses inside parse_esp_file
+    # Instrument MasterResolver.find_master_file and get_or_load_master
+    orig_find_master = MasterResolver.find_master_file
     orig_get_or_load = MasterResolver.get_or_load_master
+    discovery_scan_count = 0
     disk_parse_count = 0
+
+    def instrumented_find_master(self, master_name, origin_dir):
+        nonlocal discovery_scan_count
+        cache_key = (origin_dir.resolve(), master_name.lower())
+        if cache_key not in self._path_cache:
+            discovery_scan_count += 1
+        return orig_find_master(self, master_name, origin_dir)
 
     def instrumented_get_or_load(self, master_name, origin_dir):
         nonlocal disk_parse_count
@@ -436,10 +445,12 @@ def test_esp_parser_master_cache_single_parse(tmp_path, monkeypatch):
             disk_parse_count += 1
         return orig_get_or_load(self, master_name, origin_dir)
 
+    monkeypatch.setattr(MasterResolver, "find_master_file", instrumented_find_master)
     monkeypatch.setattr(MasterResolver, "get_or_load_master", instrumented_get_or_load)
 
     entries = parse_esp_file(mod_esp)
     assert len(entries) == 500
+    assert discovery_scan_count == 1, f"Expected exactly 1 master discovery scan, got {discovery_scan_count}"
     assert disk_parse_count == 1, f"Expected exactly 1 disk read/parse, got {disk_parse_count}"
 
     for e in entries:
@@ -649,3 +660,66 @@ def test_esp_parser_tplt_cycle_protection(tmp_path):
     dialog_entry = next(e for e in entries if e.is_dialog)
     assert dialog_entry.voice_type is None
     assert dialog_entry.actor == "Cyclic Actor A"
+
+
+def test_esp_parser_localized_plugin_stringid_guard(tmp_path):
+    """
+    Test 15 (Localized StringID Guard):
+    When a plugin or master has FLAG_LOCALIZED (0x80) set in its TES4 header,
+    subrecords like FULL contain 4-byte uint32 StringIDs referencing external .STRINGS tables,
+    not raw inline text.
+    The parser must NOT treat 4-byte printable values as actor text, falling back safely
+    to EDID (if present) or Actor_<FormID>.
+    """
+    FLAG_LOCALIZED = 0x00000080
+
+    # 1. Localized plugin with NPC having 4-byte ASCII FULL (e.g. b"HERO" -> StringID 0x4F524548) and EDID
+    esp_path = tmp_path / "LocalizedMod.esp"
+    vtyp_rec = make_record(b"VTYP", 0x00010001, make_subrecord(b"EDID", b"MaleCommander\x00"))
+
+    # NPC 1: FULL is 4 printable bytes (b"HERO"), EDID is "GuardCommander"
+    npc1 = make_record(
+        b"NPC_",
+        0x00020001,
+        make_subrecord(b"EDID", b"GuardCommander\x00") +
+        make_subrecord(b"FULL", b"HERO") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00010001))
+    )
+
+    # NPC 2: FULL is 4 printable bytes (b"KING"), NO EDID
+    npc2 = make_record(
+        b"NPC_",
+        0x00020002,
+        make_subrecord(b"FULL", b"KING") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00010001))
+    )
+
+    info1 = make_record(
+        b"INFO",
+        0x00030001,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00020001)) +
+        make_subrecord(b"NAM1", b"Order from commander.\x00")
+    )
+    info2 = make_record(
+        b"INFO",
+        0x00030002,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00020002)) +
+        make_subrecord(b"NAM1", b"Royal decree.\x00")
+    )
+
+    esp_path.write_bytes(
+        make_tes4_header([], flags=FLAG_LOCALIZED) +
+        make_grup(b"NPC_", vtyp_rec + npc1 + npc2 + info1 + info2)
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialog1 = next(e for e in entries if e.form_id == "00030001")
+    dialog2 = next(e for e in entries if e.form_id == "00030002")
+
+    # NPC 1: should use EDID "GuardCommander", NOT raw 4-byte StringID "HERO"
+    assert dialog1.actor == "GuardCommander"
+    assert dialog1.voice_type == "MaleCommander"
+
+    # NPC 2: without EDID, should fall back to Actor_00020002, NOT raw 4-byte StringID "KING"
+    assert dialog2.actor == "Actor_00020002"
+    assert dialog2.voice_type == "MaleCommander"
