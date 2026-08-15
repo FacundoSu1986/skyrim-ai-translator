@@ -7,8 +7,8 @@ import TranslationProgress from './components/TranslationProgress';
 import RitualLog from './components/RitualLog';
 import nordicCornerSvg from './assets/skyrim-ui/nordic-corner.svg';
 
-const API_ORIGIN = 'http://localhost:8000';
-const WS_ORIGIN = 'ws://localhost:8000';
+const API_ORIGIN = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const WS_ORIGIN = API_ORIGIN.replace(/^http/, 'ws');
 
 function App() {
   const [activeTab, setActiveTab] = useState('mo2'); // 'mo2' | 'manual'
@@ -42,6 +42,9 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('idle'); // idle | processing | completed | error
   const [jobId, setJobId] = useState(null);
+  // Mod name locked to the current job so later injects target the right mod
+  // even if the user changes the select while the job runs.
+  const [jobModName, setJobModName] = useState(null);
   const [downloadUrl, setDownloadUrl] = useState(null);
   const [injectStatus, setInjectStatus] = useState(null);
 
@@ -301,6 +304,7 @@ function App() {
       auto_inject: autoInject,
       ...buildAiConfig(),
     };
+    setJobModName(selectedMod);
 
     try {
       const res = await fetch(`${API_ORIGIN}/api/mo2/start`, {
@@ -328,7 +332,8 @@ function App() {
   };
 
   const injectToMo2 = async () => {
-    if (!jobId || !mo2Path || !selectedMod || injectStatus === 'injecting') {
+    const targetMod = jobModName || selectedMod;
+    if (!jobId || !mo2Path || !targetMod || injectStatus === 'injecting') {
       return;
     }
 
@@ -340,7 +345,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mo2_path: mo2Path,
-          mod_name: selectedMod,
+          mod_name: targetMod,
         }),
       });
 
@@ -369,6 +374,7 @@ function App() {
     setProgress(0);
     setLogs([]);
     setJobId(null);
+    setJobModName(null);
     setDownloadUrl(null);
     setInjectStatus(null);
   };

@@ -77,12 +77,9 @@ async def test_translate_entries_batch_error_handling():
         StringEntry(form_id="03", text="Goodbye", is_dialog=False),
     ]
 
-    result = await translate_entries(entries, "spanish", api_callable=mock_api_call_with_error)
-
-    assert len(result) == 3
-    assert result[0].translated_text == "[ES] Hello"
-    assert result[1].translated_text is None
-    assert result[2].translated_text == "[ES] Goodbye"
+    # Fail-Fast: Any individual translation failure must raise RuntimeError to prevent corrupted partial exports
+    with pytest.raises(RuntimeError, match="Fallo en la traducción de la entrada 02"):
+        await translate_entries(entries, "spanish", api_callable=mock_api_call_with_error)
 
 
 @pytest.mark.asyncio
@@ -139,8 +136,8 @@ def test_skyrim_glossary_entries():
 async def test_openai_compatible_translator_no_key():
     from src.translator import create_openai_compatible_translator
     fn = create_openai_compatible_translator(api_key="")
-    res = await fn("Sword", "Context: weapon")
-    assert res == "Traducido: Sword"
+    with pytest.raises(RuntimeError, match="api_key"):
+        await fn("Sword", "Context: weapon")
 
 
 @pytest.mark.asyncio
@@ -182,8 +179,8 @@ async def test_openai_compatible_translator_mock_error(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen_error)
 
     fn = create_openai_compatible_translator(api_key="sk-test-key")
-    res = await fn("Iron Sword", "Context: weapon")
-    assert res == "Traducido: Iron Sword"
+    with pytest.raises(RuntimeError, match="Fallo de la API"):
+        await fn("Iron Sword", "Context: weapon")
 
 
 @pytest.mark.asyncio
@@ -216,6 +213,39 @@ async def test_openai_compatible_translator_includes_glossary_in_payload(monkeyp
     assert "Whiterun -> Carrera Blanca" in system_msg
     assert "Blackreach -> Límite Sombrío" in system_msg
     assert "Soul Cairn -> Recordatorio de las Almas" in system_msg
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_translator_non_spanish_isolation(monkeypatch):
+    import io
+    import json
+    import urllib.request
+    from src.translator import create_openai_compatible_translator
+
+    captured_payload = None
+
+    class MockResponse:
+        def __enter__(self):
+            return io.BytesIO(json.dumps({"choices": [{"message": {"content": "Voyage à Blancherive"}}]}).encode("utf-8"))
+        def __exit__(self, *args):
+            pass
+
+    def mock_urlopen(req, timeout=30):
+        nonlocal captured_payload
+        captured_payload = json.loads(req.data.decode("utf-8"))
+        return MockResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    fn = create_openai_compatible_translator(api_key="sk-test-key", target_lang="French")
+    await fn("Travel to Whiterun", "Target language: French. Context: Quest")
+
+    assert captured_payload is not None
+    system_msg = captured_payload["messages"][0]["content"]
+    # French system prompt must NOT contain Spanish glossary lines
+    assert "Carrera Blanca" not in system_msg
+    assert "Sangre de Dragón" not in system_msg
+    assert "French" in system_msg
 
 
 

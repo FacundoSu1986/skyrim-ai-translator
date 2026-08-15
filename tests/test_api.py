@@ -65,11 +65,26 @@ def test_upload_json(tmp_path):
     test_json.write_text('[{"FormID": "0001", "Text": "Hi"}]', encoding="utf-8")
     
     with open(test_json, "rb") as f:
-        response = client.post("/api/upload", files={"file": ("TestMod.json", f, "application/json")})
+        response = client.post(
+            "/api/upload",
+            files={"file": ("TestMod.json", f, "application/json")},
+            data={"config": '{"api_key": "sk-secret-key", "target_lang": "French"}'}
+        )
         
     assert response.status_code == 200
-    assert "job_id" in response.json()
+    job_id = response.json()["job_id"]
     assert response.json()["plugin_name"] == "TestMod"
+    # Verify api_key is NOT retained in job["config"]
+    assert "api_key" not in jobs[job_id]["config"]
+    assert jobs[job_id]["api_key"] == "sk-secret-key"
+
+def test_mo2_start_invalid_mo2_path():
+    res = client.post("/api/mo2/start", json={
+        "mo2_path": "Z:\\non_existent_drive_folder_123",
+        "mod_name": "AnyMod"
+    })
+    assert res.status_code == 400
+    assert "MO2" in res.json()["detail"]
 
 def test_mo2_start_and_inject(tmp_path):
     mo2_dir = tmp_path / "mods"
