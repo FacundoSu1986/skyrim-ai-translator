@@ -41,6 +41,17 @@ SKYRIM_GLOSSARY = {
     "College of Winterhold": "Colegio de Hibernalia",
     "Companions": "Compañeros",
     "Nightingale": "Ruiseñor",
+    "Solstheim": "Solstheim",
+    "Raven Rock": "Roca del Cuervo",
+    "Tel Mithryn": "Tel Mithryn",
+    "Blackreach": "Límite Sombrío",
+    "Soul Cairn": "El Recordatorio de las Almas",
+    "Skyforge": "Forja del Cielo",
+    "Daedric": "Daédrico",
+    "Dragonscale": "Escamas de dragón",
+    "Dragonbone": "Hueso de dragón",
+    "Ebony": "Ébano",
+    "Sweetroll": "Bollo dulce",
 }
 
 SKYRIM_SYSTEM_PROMPT = """Eres un traductor experto y localizador profesional para The Elder Scrolls V: Skyrim.

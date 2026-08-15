@@ -6,6 +6,16 @@ from api import app, jobs
 
 client = TestClient(app)
 
+def test_health_check():
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert "active_jobs" in data
+    assert "available_voices" in data
+    assert data["service"] == "skyrim-ai-translator-api"
+
+
 def test_get_voices():
     response = client.get("/api/voices")
     assert response.status_code == 200

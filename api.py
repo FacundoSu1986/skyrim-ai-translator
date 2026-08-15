@@ -61,6 +61,18 @@ class InjectRequest(BaseModel):
     mod_name: str
 
 
+@app.get("/api/health")
+async def health_check():
+    """Returns server health status, active jobs, and system capabilities."""
+    return {
+        "status": "healthy",
+        "active_jobs": len(jobs),
+        "available_voices": len(AVAILABLE_VOICES),
+        "service": "skyrim-ai-translator-api",
+        "version": "1.0.0"
+    }
+
+
 @app.get("/api/voices")
 async def get_voices():
     """Returns list of available high-quality Edge-TTS voices."""

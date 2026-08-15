@@ -121,3 +121,13 @@ async def test_translate_entries_concurrency():
     assert max_active_calls > 1
 
 
+def test_skyrim_glossary_entries():
+    from src.translator import SKYRIM_GLOSSARY
+    assert "Dragonborn" in SKYRIM_GLOSSARY
+    assert SKYRIM_GLOSSARY["Dragonborn"] == "Sangre de Dragón"
+    assert SKYRIM_GLOSSARY["Whiterun"] == "Carrera Blanca"
+    assert SKYRIM_GLOSSARY["Blackreach"] == "Límite Sombrío"
+    assert SKYRIM_GLOSSARY["Sweetroll"] == "Bollo dulce"
+
+
+
