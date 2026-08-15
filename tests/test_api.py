@@ -102,13 +102,21 @@ def test_mo2_start_and_inject(tmp_path):
     assert (mod_folder / "test_file.txt").exists()
 
 
-def test_auto_detect_mo2_fallback():
+def test_auto_detect_mo2_fallback(monkeypatch):
+    """Verify MO2 auto-detection fallback returns found=False and empty mods deterministically when paths do not exist."""
+    import api
+
+    # Arrange
+    monkeypatch.setattr(api.os.path, "isdir", lambda p: False)
+
+    # Act
     response = client.get("/api/mo2/auto-detect")
+
+    # Assert
     assert response.status_code == 200
     data = response.json()
-    assert "found" in data
-    if not data["found"]:
-        assert data["mods"] == []
+    assert data["found"] is False
+    assert data["mods"] == []
 
 
 def test_inject_invalid_job():

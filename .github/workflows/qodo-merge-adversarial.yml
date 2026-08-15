@@ -2,41 +2,24 @@ name: "Qodo Merge - Revisor Adversarial Interactivo"
 
 on:
   pull_request:
-    # Y-5: mismo conjunto que [github_action_config].pr_actions en .pr_agent.toml.
-    # 'synchronize' lo maneja handle_push_trigger, no pr_actions — se mantiene
-    # acá porque la Action necesita el evento en bruto para detectarlo.
     types: [opened, reopened, ready_for_review, synchronize]
     paths-ignore:
-      # Y-6: docs/** y **/*.md salieron del ignore. Un PR que solo actualiza
-      # docs/pending_ooda_status.md (obligatorio al cerrar un ítem T-XX, por
-      # AGENTS.md) antes nunca disparaba revisión.
       - "**/*.png"
       - "**/*.jpg"
       - "**/*.svg"
   issue_comment:
     types: [created]
 
-# Y-4: concurrency separada por tipo de evento. Un push (pull_request) cancela
-# una revisión obsoleta; un comando humano (issue_comment) nunca se cancela —
-# se encola detrás del anterior del mismo PR en vez de perderse.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Y-7: statuses:write no lo usa /review, /describe ni /ask — pr-agent solo
-# publica como GitHub Check si publish_as_check_run=true, que no está seteado.
-# Permisos otorgados por job (mínimo privilegio), no a nivel workflow.
 permissions:
   contents: read
 
 jobs:
   auto-review:
     name: "Auto-revisión en PR interno"
-    # El gate de bots se movió por completo a .pr_agent.toml (github.ignore_bot_pr):
-    # filtrar acá con sender.type != 'Bot' bloqueaba el evento antes de que PR-Agent
-    # pudiera aplicar esa política, dejando ignore_bot_pr=false sin efecto para
-    # PRs de Dependabot/Renovate — justo la superficie de supply-chain que se
-    # buscaba habilitar.
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
@@ -45,14 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      contents: read
       pull-requests: write
+      issues: write
     steps:
-      # Y-2: los pasos de checkout de configuración se eliminaron. Verificado
-      # contra GithubProvider.get_repo_settings() de pr-agent: .pr_agent.toml se
-      # lee por la API de GitHub, nunca desde el workspace del runner — el
-      # checkout no protegía nada, solo simulaba hacerlo. Sin CONFIG_BRANCH
-      # seteada, get_repo_settings() ya lee de la default branch por su cuenta
-      # (no hace falta fijarla explícitamente: sería el mismo valor).
       - name: "Ejecutar Qodo Merge / PR-Agent"
         uses: Codium-ai/pr-agent@570f67ed5fc8db5be74c18df070bc20079b64b0d # v0.41.0
         env:
@@ -72,7 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      pull-requests: read
+      contents: read
+      pull-requests: write
       issues: write
     steps:
       - name: "Validar comando permitido"
@@ -82,15 +62,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          # Y-1: pr-agent NO recibe solo la primera línea del comentario — recibe
-          # el body completo y lo tokeniza con shlex(posix=True, whitespace_split=True),
-          # donde los saltos de línea son separadores de token igual que los espacios.
-          # update_settings_from_args() aplica cada "--clave=valor" sin allowlist ni
-          # blocklist, incluyendo --config.extra_config_url=<URL> (carga una config
-          # TOML remota arbitraria antes de la del repo). Validar solo la línea 1
-          # deja pasar overrides de configuración escondidos en las líneas 2..N.
-          # Por eso acá se audita el body completo, no solo su primera línea.
 
           body="${COMMENT_BODY//$'\r'/}"
 
@@ -104,8 +75,7 @@ jobs:
           first_line="${first_line#"${first_line%%[![:space:]]*}"}"
           first_line="${first_line%"${first_line##*[![:space:]]}"}"
 
-          # Ninguna línea del comentario puede contener un flag "--..." — esa es
-          # la sintaxis que update_settings_from_args interpreta como override.
+          # Ninguna línea del comentario puede contener un flag "--..." para evitar overrides arbitrarios
           while IFS= read -r line; do
             case "$line" in
               *--*) deny "argumentos '--clave=valor' no permitidos (override de configuración)" ;;
@@ -114,14 +84,14 @@ jobs:
 
           case "$first_line" in
             /review|/describe)
-              # Sin argumentos: exigir que sea la única línea con contenido real.
+              # Sin argumentos: exigir que sea la única línea con contenido real
               extra="$(printf '%s\n' "$body" | grep -c '[^[:space:]]' || true)"
               if [ "$extra" -ne 1 ]; then
                 deny "$first_line debe ser la única línea del comentario"
               fi
               ;;
             "/ask "*)
-              # /ask admite una pregunta multilínea; los '--' ya se bloquean arriba.
+              # /ask admite preguntas multilínea
               ;;
             *)
               deny "comando no permitido"
@@ -130,11 +100,6 @@ jobs:
 
           echo "run=true" >> "$GITHUB_OUTPUT"
 
-      # Y-3: el job de comentarios no verificaba que el PR fuera del propio
-      # repositorio (auto-review sí lo hace). Sin esto, un colaborador podía
-      # escribir /review en un PR de fork y correr el agente sobre un diff
-      # 100% controlado por un tercero — superficie de prompt-injection contra
-      # un bot con permisos de escritura en issues/pull-requests.
       - name: "Verificar que el PR no es de un fork"
         if: steps.gate.outputs.run == 'true'
         env:
@@ -152,10 +117,6 @@ jobs:
             exit 1
           fi
 
-      # Y-2: mismo motivo que en auto-review — pr-agent lee .pr_agent.toml por
-      # la API de GitHub, no del workspace. El checkout de "rama base" que
-      # existía acá (incluyendo el paso "gh pr view --json baseRefName") no
-      # aportaba la protección que su comentario describía; se eliminó.
       - name: "Ejecutar Qodo Merge / PR-Agent"
         if: steps.gate.outputs.run == 'true'
         uses: Codium-ai/pr-agent@570f67ed5fc8db5be74c18df070bc20079b64b0d # v0.41.0
