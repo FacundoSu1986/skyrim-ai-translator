@@ -37,10 +37,43 @@ DNAM_TEXT_RECORDS = {b"MGEF", b"RACE"}
 FLAG_COMPRESSED = 0x00040000
 RECORD_HEADER_SIZE = 24  # Skyrim standard record header length
 
+# Standard Skyrim Vanilla Master VoiceType FormIDs (from Skyrim.esm)
+VANILLA_VOICE_TYPES = {
+    "00013ADC": "FemaleCommander",
+    "00013ADE": "MaleNord",
+    "00013ADF": "FemaleYoungEager",
+    "00013AD6": "MaleEvenToned",
+    "00013AD7": "FemaleCoward",
+    "00013AD8": "MaleBrute",
+    "00013AD9": "MaleCondescending",
+    "00013ADA": "FemaleCondescending",
+    "00013ADB": "MaleCommoner",
+    "00013AD4": "FemaleEvenToned",
+    "00013AE0": "MaleCommonerAccented",
+    "00013AE1": "FemaleCommoner",
+    "00013AE2": "MaleChild",
+    "00013AE3": "FemaleChild",
+    "00013AE4": "FemaleElfHaughty",
+    "00013AE5": "MaleElfHaughty",
+    "00013AE6": "FemaleShrill",
+    "00013AE7": "MaleDarkElf",
+    "00013AE8": "FemaleDarkElf",
+    "00013AE9": "MaleArgonian",
+    "00013AEA": "FemaleArgonian",
+    "00013AEB": "MaleKhajiit",
+    "00013AEC": "FemaleKhajiit",
+    "00013AED": "MaleOrc",
+    "00013AEE": "FemaleOrc",
+    "00013AEF": "MaleOldKindly",
+    "00013AF0": "FemaleOldKindly",
+    "00013AF1": "MaleOldGrumpy",
+    "00013AF2": "FemaleOldGrumpy",
+    "0002F7C2": "MaleGuard",
+}
+
 
 def _decode_string(raw_bytes: bytes) -> str:
     """Decodes bytes to string using UTF-8 with fallback to Windows-1252 / latin1."""
-    # Strip trailing null bytes
     cleaned = raw_bytes.rstrip(b"\x00")
     if not cleaned:
         return ""
@@ -62,8 +95,6 @@ def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, str, bytes]]:
         tag = data[offset:offset+4]
 
         if tag == b"GRUP":
-            # Records live inside GRUPs: step past the 24-byte group header
-            # and keep iterating the records it contains.
             offset += RECORD_HEADER_SIZE
             continue
 
@@ -103,6 +134,7 @@ def parse_esp_file(filepath: str | Path) -> List[StringEntry]:
     """
     Parses a Skyrim Bethesda Plugin file (.esp, .esm, .esl) and extracts all
     translatable strings, quests, and dialogue responses into StringEntry items.
+    Follows the full speaker relation chain: INFO (ANAM) -> NPC_ (VTCK) -> VTYP (EDID).
     """
     path = Path(filepath)
     if not path.exists():
@@ -119,16 +151,34 @@ def parse_esp_file(filepath: str | Path) -> List[StringEntry]:
     if sig != b"TES4":
         logger.warning(f"File {path.name} does not start with TES4 header (got {sig})")
 
-    # Pass 1: build FormID -> EditorID map so VTCK voice references can be
-    # resolved to real voice type names (e.g. "MaleNord", "FemaleCommander")
+    # Pass 1: Build indexes for VoiceTypes, NPC records, and EditorIDs
     formid_to_edid: dict[str, str] = {}
-    for _tag, _flags, form_id_hex, body in _iter_records(data):
+    npc_to_vtck: dict[str, str] = {}
+    npc_to_name: dict[str, str] = {}
+
+    for tag, _flags, form_id_hex, body in _iter_records(data):
+        edid = None
+        full_name = None
+        vtck_formid = None
+
         for s_type, payload in _read_subrecords(body):
             if s_type == b"EDID" and payload:
                 edid = _decode_string(payload).strip()
-                if edid:
-                    formid_to_edid[form_id_hex] = edid
-                break
+            elif s_type == b"FULL" and payload:
+                full_name = _decode_string(payload).strip()
+            elif s_type == b"VTCK" and len(payload) >= 4:
+                vtck_formid = f"{int.from_bytes(payload[:4], 'little'):08X}"
+
+        if edid:
+            formid_to_edid[form_id_hex] = edid
+
+        if tag == b"NPC_":
+            if full_name:
+                npc_to_name[form_id_hex] = full_name
+            elif edid:
+                npc_to_name[form_id_hex] = edid
+            if vtck_formid:
+                npc_to_vtck[form_id_hex] = vtck_formid
 
     entries: List[StringEntry] = []
     seen_keys = set()
@@ -137,15 +187,28 @@ def parse_esp_file(filepath: str | Path) -> List[StringEntry]:
         if tag not in INTERESTING_RECORDS:
             continue
 
+        speaker_formid = None
+        direct_vtck = None
+
+        for s_type, payload in _read_subrecords(body):
+            if s_type == b"ANAM" and len(payload) >= 4:
+                speaker_formid = f"{int.from_bytes(payload[:4], 'little'):08X}"
+            elif s_type == b"VTCK" and len(payload) >= 4:
+                direct_vtck = f"{int.from_bytes(payload[:4], 'little'):08X}"
+
         actor_name = None
         voice_type = None
-        for s_type, payload in _read_subrecords(body):
-            if s_type == b"VTCK" and len(payload) >= 4:
-                # Voice Type FormID: resolve against this plugin's editor IDs
-                vtck_formid = f"{int.from_bytes(payload[:4], 'little'):08X}"
-                voice_type = formid_to_edid.get(vtck_formid)
-            elif s_type == b"ANAM" and len(payload) >= 4:
-                actor_name = f"Actor_{int.from_bytes(payload[:4], 'little'):08X}"
+
+        if speaker_formid:
+            actor_name = npc_to_name.get(speaker_formid, f"Actor_{speaker_formid}")
+            # Follow full relationship: INFO -> speaker NPC_ -> VTCK -> VoiceType name
+            target_vtck = npc_to_vtck.get(speaker_formid, speaker_formid)
+            voice_type = formid_to_edid.get(target_vtck) or VANILLA_VOICE_TYPES.get(target_vtck)
+        elif direct_vtck:
+            voice_type = formid_to_edid.get(direct_vtck) or VANILLA_VOICE_TYPES.get(direct_vtck)
+
+        if tag == b"NPC_" and not actor_name:
+            actor_name = npc_to_name.get(form_id_hex, f"Actor_{form_id_hex}")
 
         for s_type, payload in _read_subrecords(body):
             is_text_subrecord = s_type in INTERESTING_SUBRECORDS or (

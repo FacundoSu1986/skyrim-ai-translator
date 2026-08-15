@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, WebSocket, Query, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, WebSocket, Query, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -65,6 +65,16 @@ def _sanitize_name(name: str) -> str:
     if not clean or clean in {".", ".."}:
         raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
     return clean
+
+
+def _validate_mo2_path(mo2_path: str) -> Path:
+    """Validates that mo2_path is provided and points to a real existing directory on the host."""
+    if not mo2_path or not mo2_path.strip():
+        raise HTTPException(status_code=400, detail="La ruta de MO2 no puede estar vacía")
+    p = Path(mo2_path)
+    if not p.is_dir():
+        raise HTTPException(status_code=400, detail=f"Directorio MO2 inválido o inexistente: {mo2_path}")
+    return p
 
 
 def _copy_build_to_dir(build_dir: Path, target_dir: Path) -> None:
@@ -195,7 +205,7 @@ async def get_mo2_mods(path: str = Query(...)):
 @app.post("/api/upload")
 async def upload_json(
     file: UploadFile = File(...),
-    config: Optional[str] = None
+    config: Optional[str] = Form(None)
 ):
     """Uploads a mod JSON or ESP file and creates a new translation job."""
     job_id = str(uuid.uuid4())
@@ -207,9 +217,11 @@ async def upload_json(
     await asyncio.to_thread(_save_upload_file, file, file_path)
 
     cfg = {}
+    transient_api_key = None
     if config:
         try:
             cfg = json.loads(config)
+            transient_api_key = cfg.pop("api_key", None)
         except Exception as err:
             logger.warning("JSON de configuración de subida no válido: %s", err)
 
@@ -223,6 +235,7 @@ async def upload_json(
         "file_path": str(file_path),
         "plugin_name": plugin_name,
         "config": cfg,
+        "api_key": transient_api_key,
         "progress": 0,
         "logs": [],
         "output_dir": str(upload_dir / "build")
@@ -233,8 +246,9 @@ async def upload_json(
 @app.post("/api/mo2/start")
 async def start_mo2_translation(req: MO2TranslateRequest):
     """Starts translation job directly from a mod selected in Mod Organizer 2."""
+    mo2_base = _validate_mo2_path(req.mo2_path)
     mod_name = _sanitize_name(req.mod_name)
-    mod_dir = Path(req.mo2_path) / mod_name
+    mod_dir = mo2_base / mod_name
     if not mod_dir.is_dir():
         raise HTTPException(status_code=404, detail="Directorio del mod no encontrado en MO2")
 
@@ -283,7 +297,7 @@ async def start_mo2_translation(req: MO2TranslateRequest):
         "config": cfg,
         # Transient: consumed and removed by the websocket handler
         "api_key": req.api_key,
-        "mo2_path": req.mo2_path,
+        "mo2_path": str(mo2_base),
         "mod_name": mod_name,
         "progress": 0,
         "logs": [],
@@ -342,45 +356,42 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
 
         await log_msg(f"✅ {len(entries)} textos y diálogos extraídos con éxito.", 25, "success")
 
-        # 2. Translation
-        await log_msg(f"🌐 Traduciendo al {target_lang} con glosario oficial de Skyrim...", 35, "translate")
+        # 2. Translation with Fail-Fast Contract
+        await log_msg(f"🌐 Traduciendo al {target_lang}...", 35, "translate")
         if api_key:
             translator_fn = create_openai_compatible_translator(api_key, api_base, model)
             await log_msg(f"🧠 Conectado a LLM ({model})...", 40, "info")
         else:
             translator_fn = free_translator_callable
-            await log_msg("⚡ Usando Traductor Neuronal Gratuito con Lore de Bethesda...", 40, "info")
+            await log_msg("⚡ Usando Traductor Neuronal Gratuito...", 40, "info")
 
         translated_entries = await translate_entries(
             entries,
             target_lang=target_lang,
             api_callable=translator_fn
         )
-        failed = sum(1 for e in translated_entries if e.translated_text is None)
-        if failed:
-            await log_msg(f"⚠️ {failed}/{len(translated_entries)} textos no se pudieron traducir (se omitirán del DSD).", 60, "error")
-        else:
-            await log_msg("✅ Traducción completada con éxito.", 60, "success")
+        await log_msg("✅ Traducción completada con éxito.", 60, "success")
 
         # 3. Audio generation with Smart VoiceType Mapping
         build_dir = Path(job["output_dir"])
         build_dir.mkdir(parents=True, exist_ok=True)
 
         dialog_entries = [e for e in translated_entries if e.is_dialog]
+        success_voice_count = 0
+        total_dialogs = len(dialog_entries)
+
         if generate_voice and dialog_entries:
-            await log_msg(f"🎙️ Generando voces neuronales ({len(dialog_entries)} diálogos)...", 65, "audio")
+            await log_msg(f"🎙️ Generando voces neuronales ({total_dialogs} diálogos)...", 65, "audio")
             voice_base_dir = build_dir / "Sound" / "Voice" / f"{job['plugin_name']}.esp"
             voice_base_dir.mkdir(parents=True, exist_ok=True)
 
-            success_count = 0
             completed_count = 0
             tts_semaphore = asyncio.Semaphore(5)
             progress_lock = asyncio.Lock()
-            total = len(dialog_entries)
-            log_every = max(1, total // 5)
+            log_every = max(1, total_dialogs // 5)
 
             async def _gen_voice(entry):
-                nonlocal success_count, completed_count
+                nonlocal success_voice_count, completed_count
                 assigned_voice = resolve_voice_for_entry(entry.voice_type, default_fallback=default_voice)
                 async with tts_semaphore:
                     ok = await generate_voice_file(
@@ -391,16 +402,19 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     )
                 async with progress_lock:
                     if ok:
-                        success_count += 1
+                        success_voice_count += 1
                     completed_count += 1
-                    curr_progress = 65 + int(completed_count / total * 20)
-                    if completed_count % log_every == 0 or completed_count == total:
+                    curr_progress = 65 + int(completed_count / total_dialogs * 20)
+                    if completed_count % log_every == 0 or completed_count == total_dialogs:
                         voice_label = assigned_voice.split("-")[2] if assigned_voice.count("-") >= 2 else assigned_voice
-                        await log_msg(f"🔊 [{voice_label}] Diálogo {completed_count}/{total} generado...", curr_progress, "audio")
+                        await log_msg(f"🔊 [{voice_label}] Diálogo {completed_count}/{total_dialogs} generado...", curr_progress, "audio")
 
             await asyncio.gather(*[_gen_voice(entry) for entry in dialog_entries])
 
-            await log_msg(f"✅ {success_count} archivos de voz neuronal organizados por VoiceType.", 85, "success")
+            if success_voice_count == total_dialogs:
+                await log_msg(f"✅ {success_voice_count}/{total_dialogs} archivos de voz neuronal organizados por VoiceType.", 85, "success")
+            else:
+                await log_msg(f"⚠️ {success_voice_count}/{total_dialogs} archivos de voz generados ({total_dialogs - success_voice_count} fallaron).", 85, "error")
         else:
             await log_msg("⏩ Generación de audio omitida.", 85, "info")
 
@@ -425,7 +439,12 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
 
         job["zip_path"] = str(zip_path)
         job["status"] = "completed"
-        await log_msg("🎉 ¡Ritual completado! Tu mod de Skyrim está 100% traducido y doblado.", 100, "success")
+        if generate_voice and dialog_entries and success_voice_count < total_dialogs:
+            final_msg = f"🎉 ¡Traducción completada con éxito! ({success_voice_count}/{total_dialogs} audios doblados)."
+        else:
+            final_msg = "🎉 ¡Ritual completado! Tu mod de Skyrim está 100% traducido y doblado."
+
+        await log_msg(final_msg, 100, "success")
         await websocket.send_json({
             "status": "completed",
             "download_url": f"/api/download/{job_id}",
@@ -470,8 +489,9 @@ async def inject_to_mo2(job_id: str, req: InjectRequest):
     if not build_dir.exists():
         raise HTTPException(status_code=400, detail="No hay archivos generados para inyectar")
 
+    mo2_base = _validate_mo2_path(req.mo2_path)
     mod_name = _sanitize_name(req.mod_name)
-    target_mod_dir = Path(req.mo2_path) / mod_name
+    target_mod_dir = mo2_base / mod_name
     if not target_mod_dir.is_dir():
         raise HTTPException(status_code=404, detail="Carpeta del mod en MO2 no encontrada")
 

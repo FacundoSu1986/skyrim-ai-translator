@@ -115,6 +115,10 @@ async def translate_entries(
     api_callable: Callable[[str, str], Awaitable[str]] = default_llm_call,
     concurrency_limit: int = 10
 ) -> List[StringEntry]:
+    """
+    Translates a list of StringEntry records concurrently with strict Fail-Fast semantics.
+    Raises RuntimeError immediately if any translation fails, preventing corrupted/partial exports.
+    """
     if not entries:
         return []
 
@@ -132,8 +136,8 @@ async def translate_entries(
             try:
                 translated_text = await api_callable(entry.text, context)
             except Exception as err:
-                logger.error(f"Error translating entry {entry.form_id}: {err}")
-                translated_text = None
+                logger.error("Error traduciendo entrada %s: %s", entry.form_id, err)
+                raise RuntimeError(f"Fallo en la traducción de la entrada {entry.form_id}: {err}") from err
 
         return replace(entry, translated_text=translated_text)
 

@@ -20,6 +20,9 @@ _PLACEHOLDER_RE = {
 _PLACEHOLDER_TO_ESP = {
     f"__SKY_{i}__": esp_term for i, (_, esp_term) in enumerate(_SORTED_GLOSSARY)
 }
+_PLACEHOLDER_TO_ORIG = {
+    f"__SKY_{i}__": eng_term for i, (eng_term, _) in enumerate(_SORTED_GLOSSARY)
+}
 
 _LANGUAGE_CODES = {
     "spanish": "es",
@@ -53,33 +56,39 @@ def _resolve_lang_code(target_lang: str) -> str:
     return _LANGUAGE_CODES.get(normalized, "es")
 
 
-def _protect_glossary(text: str) -> tuple[str, dict[str, str]]:
-    """Replaces glossary terms with placeholders in a single pass."""
+def _protect_glossary(text: str, target_lang: str = "Spanish") -> tuple[str, dict[str, str]]:
+    """
+    Replaces glossary terms with placeholders in a single pass.
+    If target_lang is Spanish, maps placeholders to Spanish localized lore terms.
+    If target_lang is non-Spanish (French, German, etc.), maps placeholders to the original lore terms
+    to prevent machine translation from corrupting canonical Bethesda terms or injecting Spanish words.
+    """
     replacements: dict[str, str] = {}
+    is_spanish = _resolve_lang_code(target_lang) == "es"
+
     for pattern, placeholder in _PLACEHOLDER_RE.items():
         if pattern.search(text):
             text = pattern.sub(placeholder, text)
-            replacements[placeholder] = _PLACEHOLDER_TO_ESP[placeholder]
+            replacements[placeholder] = _PLACEHOLDER_TO_ESP[placeholder] if is_spanish else _PLACEHOLDER_TO_ORIG[placeholder]
     return text, replacements
 
 
 def _restore_glossary(text: str, replacements: dict[str, str]) -> str:
     """Restores placeholders case-insensitively to handle translated casing variations."""
-    for placeholder, esp_term in replacements.items():
-        text = re.sub(re.escape(placeholder), esp_term, text, flags=re.IGNORECASE)
+    for placeholder, term in replacements.items():
+        text = re.sub(re.escape(placeholder), term, text, flags=re.IGNORECASE)
     return text
 
 
 def translate_free_text_sync(text: str, target_lang: str = "Spanish") -> str:
     """
     Translates text using the free Google Translate endpoint with automatic
-    Skyrim glossary protection. Raises on network/API failure instead of
-    returning a fake translation.
+    Skyrim glossary protection tailored to the target language. Raises on network/API failure.
     """
     if not text or not text.strip():
         return text
 
-    processed_text, replacements = _protect_glossary(text)
+    processed_text, replacements = _protect_glossary(text, target_lang=target_lang)
 
     lang_code = _resolve_lang_code(target_lang)
     url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={lang_code}&dt=t&q={urllib.parse.quote(processed_text)}"
@@ -95,7 +104,7 @@ def translate_free_text_sync(text: str, target_lang: str = "Spanish") -> str:
             translated_result = "".join(translated_pieces)
             return _restore_glossary(translated_result, replacements).strip()
     except Exception as e:
-        logger.error(f"Free translation failed for '{text[:20]}...': {e}")
+        logger.error("Free translation failed for '%s...': %s", text[:20], e)
         raise RuntimeError(f"Fallo del traductor gratuito: {e}") from e
 
 

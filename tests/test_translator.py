@@ -77,12 +77,9 @@ async def test_translate_entries_batch_error_handling():
         StringEntry(form_id="03", text="Goodbye", is_dialog=False),
     ]
 
-    result = await translate_entries(entries, "spanish", api_callable=mock_api_call_with_error)
-
-    assert len(result) == 3
-    assert result[0].translated_text == "[ES] Hello"
-    assert result[1].translated_text is None
-    assert result[2].translated_text == "[ES] Goodbye"
+    # Fail-Fast: Any individual translation failure must raise RuntimeError to prevent corrupted partial exports
+    with pytest.raises(RuntimeError, match="Fallo en la traducción de la entrada 02"):
+        await translate_entries(entries, "spanish", api_callable=mock_api_call_with_error)
 
 
 @pytest.mark.asyncio
