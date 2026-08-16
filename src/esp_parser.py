@@ -137,6 +137,31 @@ def _extract_masters_from_tes4(body: bytes) -> list[str]:
     return masters
 
 
+def _extract_record_editor_id(body: bytes) -> Optional[str]:
+    """Returns a record's EDID when it is present and contains sane text."""
+    for s_type, payload in _read_subrecords(body):
+        if s_type == b"EDID" and payload:
+            editor_id = _decode_string(payload).strip()
+            if _is_valid_text(editor_id):
+                return editor_id
+            return None
+    return None
+
+
+def _parse_info_response_number(payload: bytes) -> Optional[int]:
+    """Decodes Skyrim INFO.TRDT's u8 Response number at offset 12."""
+    if len(payload) < 13:
+        return None
+    return payload[12]
+
+
+def _parse_quest_objective_index(payload: bytes) -> Optional[int]:
+    """Decodes Skyrim QUST.QOBJ Objective Index (u16 little-endian)."""
+    if len(payload) < 2:
+        return None
+    return int.from_bytes(payload[:2], "little")
+
+
 def _resolve_record_key(
     raw_form_id: int,
     current_plugin: str,
@@ -504,6 +529,10 @@ def parse_esp_file(
             break
 
     plugin_name = path.name
+    canonical_plugin_names = {
+        _norm_plugin(plugin_name): plugin_name,
+        **{_norm_plugin(master): master for master in local_masters},
+    }
     master_resolver = MasterResolver(search_paths=master_search_paths)
     warned_esl: set[int] = set()
     warned_invalid_index: set[tuple[int, int]] = set()
@@ -563,12 +592,27 @@ def parse_esp_file(
 
     # Pass 2: Extract translatable strings and resolve dialogue voice types
     entries: List[StringEntry] = []
-    seen_keys = set()
+    # DSD identity (form_id, subrecord, string_index): preserves every INFO
+    # response / quest objective while deduplicating accidentally repeated
+    # subrecords that share the same identity (string_index may be None).
+    seen_identities: set[tuple[str, bytes, Optional[int]]] = set()
 
     for tag, flags, form_id_val, form_id_hex, body in _iter_records(data):
         if tag not in INTERESTING_RECORDS:
             continue
 
+        record_key = _resolve_record_key(
+            form_id_val, plugin_name, local_masters,
+            warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+        )
+        defining_plugin = None
+        local_object_id = None
+        if record_key is not None:
+            defining_plugin = canonical_plugin_names.get(record_key.plugin, record_key.plugin)
+            local_object_id = record_key.object_id
+
+        record_type = tag.decode("ascii", errors="ignore")
+        editor_id = _extract_record_editor_id(body)
         speaker_formid: Optional[int] = None
 
         if tag == b"INFO":
@@ -614,7 +658,28 @@ def parse_esp_file(
             else:
                 actor_name = f"Actor_{form_id_hex}"
 
+        current_info_response_index: Optional[int] = None
+        current_quest_objective_index: Optional[int] = None
+
         for s_type, payload in _read_subrecords(body):
+            if tag == b"INFO" and s_type == b"TRDT":
+                current_info_response_index = _parse_info_response_number(payload)
+                if current_info_response_index is None:
+                    logger.warning(
+                        "INFO %s has malformed TRDT (%d bytes); NAM1 index will remain unresolved",
+                        form_id_hex, len(payload)
+                    )
+                continue
+
+            if tag == b"QUST" and s_type == b"QOBJ":
+                current_quest_objective_index = _parse_quest_objective_index(payload)
+                if current_quest_objective_index is None:
+                    logger.warning(
+                        "QUST %s has malformed QOBJ (%d bytes); NNAM index will remain unresolved",
+                        form_id_hex, len(payload)
+                    )
+                continue
+
             is_text_subrecord = s_type in INTERESTING_SUBRECORDS or (
                 s_type == b"DNAM" and tag in DNAM_TEXT_RECORDS
             )
@@ -625,19 +690,43 @@ def parse_esp_file(
             if not text_val:
                 continue
 
-            unique_key = (form_id_hex, s_type.decode("ascii", errors="ignore"))
-            if unique_key in seen_keys:
-                continue
-            seen_keys.add(unique_key)
-
             is_dialog = (tag == b"INFO" and s_type == b"NAM1")
+            string_index: Optional[int] = None
+            if is_dialog:
+                string_index = current_info_response_index
+                if string_index is None:
+                    logger.warning(
+                        "INFO %s NAM1 has no valid preceding TRDT response number",
+                        form_id_hex
+                    )
+                current_info_response_index = None
+            elif tag == b"QUST" and s_type == b"NNAM":
+                string_index = current_quest_objective_index
+                if string_index is None:
+                    logger.warning(
+                        "QUST %s NNAM has no valid preceding QOBJ objective index",
+                        form_id_hex
+                    )
+                current_quest_objective_index = None
+
+            entry_identity = (form_id_hex, s_type, string_index)
+            if entry_identity in seen_identities:
+                continue
+            seen_identities.add(entry_identity)
+
             entries.append(
                 StringEntry(
                     form_id=form_id_hex,
                     text=text_val,
                     is_dialog=is_dialog,
                     actor=actor_name,
-                    voice_type=voice_type
+                    voice_type=voice_type,
+                    defining_plugin=defining_plugin,
+                    local_object_id=local_object_id,
+                    record_type=record_type,
+                    subrecord_type=s_type.decode("ascii", errors="ignore"),
+                    string_index=string_index,
+                    editor_id=editor_id,
                 )
             )
 
