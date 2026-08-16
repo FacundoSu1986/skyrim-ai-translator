@@ -77,6 +77,19 @@ def _validate_mo2_path(mo2_path: str) -> Path:
     return p
 
 
+def _validate_skyrim_data_path(skyrim_data_path: Optional[str]) -> Optional[Path]:
+    """Validates that skyrim_data_path, if provided, points to a real existing directory."""
+    if not skyrim_data_path or not str(skyrim_data_path).strip():
+        return None
+    p = Path(str(skyrim_data_path).strip())
+    if not p.is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail=f"La ruta de Skyrim Data no existe o no es un directorio válido: '{skyrim_data_path}'"
+        )
+    return p
+
+
 def _copy_build_to_dir(build_dir: Path, target_dir: Path) -> None:
     """Copies every generated artifact from build_dir into target_dir (synchronous)."""
     for item in build_dir.iterdir():
@@ -116,6 +129,7 @@ AVAILABLE_VOICES = [
 class MO2TranslateRequest(BaseModel):
     mo2_path: str
     mod_name: str
+    skyrim_data_path: Optional[str] = None
     target_lang: str = "Spanish"
     generate_voice: bool = True
     voice: str = "es-ES-AlvaroNeural"
@@ -222,6 +236,10 @@ async def upload_json(
         try:
             cfg = json.loads(config)
             transient_api_key = cfg.pop("api_key", None)
+            if "skyrim_data_path" in cfg and cfg["skyrim_data_path"]:
+                _validate_skyrim_data_path(cfg["skyrim_data_path"])
+        except HTTPException:
+            raise
         except Exception as err:
             logger.warning("JSON de configuración de subida no válido: %s", err)
 
@@ -247,6 +265,8 @@ async def upload_json(
 async def start_mo2_translation(req: MO2TranslateRequest):
     """Starts translation job directly from a mod selected in Mod Organizer 2."""
     mo2_base = _validate_mo2_path(req.mo2_path)
+    if req.skyrim_data_path:
+        _validate_skyrim_data_path(req.skyrim_data_path)
     mod_name = _sanitize_name(req.mod_name)
     mod_dir = mo2_base / mod_name
     if not mod_dir.is_dir():
@@ -344,15 +364,46 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         file_p = Path(job["file_path"])
         if file_p.suffix.lower() in [".esp", ".esm", ".esl"]:
             await log_msg(f"📜 Extrayendo cadenas binarias directamente de '{file_p.name}'...", 15, "info")
-            entries = await asyncio.to_thread(parse_esp_file, file_p)
+            master_search_paths = []
+            if job.get("mo2_path") and job.get("mod_name"):
+                source_mod_dir = Path(job["mo2_path"]) / job["mod_name"]
+                if source_mod_dir.is_dir():
+                    master_search_paths.append(source_mod_dir)
+
+            skyrim_data_str = cfg.get("skyrim_data_path")
+            if skyrim_data_str:
+                data_dir = Path(skyrim_data_str)
+                if data_dir.is_dir():
+                    master_search_paths.append(data_dir)
+                else:
+                    logger.warning("Configured skyrim_data_path is not a valid directory: %s", skyrim_data_str)
+
+            entries = await asyncio.to_thread(
+                parse_esp_file,
+                file_p,
+                master_search_paths=master_search_paths or None
+            )
         else:
             await log_msg(f"📖 Leyendo pergamino JSON '{file_p.name}'...", 15, "info")
             entries = parse_strings_file(file_p)
 
         if not entries:
-            # Fallback entry if empty
-            from src.models import StringEntry
-            entries = [StringEntry(form_id="0001234A", text=f"Welcome to {job['plugin_name']}.", is_dialog=True, voice_type="MaleNord")]
+            error_code = "NO_TRANSLATABLE_CONTENT"
+            human_msg = f"No se encontraron textos o diálogos traducibles en '{file_p.name}'."
+            job["status"] = "error"
+            job["error"] = human_msg
+            job["error_code"] = error_code
+            job["logs"].append({"text": f"❌ [{error_code}] {human_msg}", "level": "error"})
+            await websocket.send_json({
+                "status": "error",
+                "error_code": error_code,
+                "error": human_msg,
+                "log": f"❌ [{error_code}] {human_msg}",
+                "level": "error",
+                "progress": 100,
+                "job_id": job_id
+            })
+            return
 
         await log_msg(f"✅ {len(entries)} textos y diálogos extraídos con éxito.", 25, "success")
 
@@ -381,6 +432,33 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         total_dialogs = len(dialog_entries)
 
         if generate_voice and dialog_entries:
+            unresolved = [e for e in dialog_entries if not e.voice_type]
+            if unresolved:
+                unresolved_count = len(unresolved)
+                sample_ids = ", ".join(f"0x{e.form_id}" for e in unresolved[:5])
+                if unresolved_count > 5:
+                    sample_ids += f", ... (+{unresolved_count - 5} más)"
+                error_code = "UNRESOLVED_VOICE_TYPES"
+                human_msg = (
+                    f"{unresolved_count}/{total_dialogs} diálogos carecen de VoiceType resuelto "
+                    f"(FormIDs: {sample_ids}). Proporcione 'skyrim_data_path' con los masters necesarios o desactive "
+                    f"la generación de voces."
+                )
+                job["status"] = "error"
+                job["error"] = human_msg
+                job["error_code"] = error_code
+                job["logs"].append({"text": f"❌ [{error_code}] {human_msg}", "level": "error"})
+                await websocket.send_json({
+                    "status": "error",
+                    "error_code": error_code,
+                    "error": human_msg,
+                    "log": f"❌ [{error_code}] {human_msg}",
+                    "level": "error",
+                    "progress": 100,
+                    "job_id": job_id
+                })
+                return
+
             await log_msg(f"🎙️ Generando voces neuronales ({total_dialogs} diálogos)...", 65, "audio")
             voice_base_dir = build_dir / "Sound" / "Voice" / f"{job['plugin_name']}.esp"
             voice_base_dir.mkdir(parents=True, exist_ok=True)
@@ -454,8 +532,16 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
 
     except Exception as e:
         job["status"] = "error"
+        job["error"] = str(e)
         logger.exception("Error crítico en pipeline de traducción para %s: %s", job_id, e)
-        await log_msg(f"❌ ERROR CRÍTICO: {str(e)}", 100, "error")
+        await websocket.send_json({
+            "status": "error",
+            "error": str(e),
+            "log": f"❌ ERROR CRÍTICO: {str(e)}",
+            "level": "error",
+            "progress": 100,
+            "job_id": job_id
+        })
 
     await websocket.close()
 

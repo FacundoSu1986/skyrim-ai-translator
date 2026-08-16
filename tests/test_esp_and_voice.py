@@ -1,7 +1,33 @@
+import hashlib
 import struct
-from src.esp_parser import parse_esp_file
+from pathlib import Path
+from src.esp_parser import parse_esp_file, MasterResolver, RecordKey, _resolve_record_key
 from src.voice_mapper import resolve_voice_for_entry
 from src.free_translator import translate_free_text_sync, _protect_glossary, _restore_glossary, _resolve_lang_code
+
+
+def make_subrecord(s_type: bytes, payload: bytes) -> bytes:
+    """Helper to build a Skyrim binary subrecord."""
+    return s_type + struct.pack("<H", len(payload)) + payload
+
+
+def make_record(rec_type: bytes, form_id: int, body: bytes, flags: int = 0) -> bytes:
+    """Helper to build a 24-byte Skyrim standard binary record."""
+    return rec_type + struct.pack("<IIIIHH", len(body), flags, form_id, 0, 44, 0) + body
+
+
+def make_grup(label: bytes, records: bytes) -> bytes:
+    """Helper to wrap records inside a Skyrim GRUP."""
+    return b"GRUP" + struct.pack("<I4sIII", 24 + len(records), label, 0, 0, 0) + records
+
+
+def make_tes4_header(masters: list[str] = (), flags: int = 0) -> bytes:
+    """Helper to build a TES4 header record with declared MAST subrecords and flags."""
+    body = b""
+    for m in masters:
+        body += make_subrecord(b"MAST", m.encode("utf-8") + b"\x00")
+        body += make_subrecord(b"DATA", struct.pack("<Q", 0))
+    return make_record(b"TES4", 0, body, flags=flags)
 
 
 def test_voice_mapper():
@@ -57,36 +83,35 @@ def test_free_translator_language_glossary_isolation():
     assert restored == "Le Dragonborn voyage vers Whiterun."
 
 
-def test_esp_parser_full_speaker_resolution(tmp_path):
+def test_esp_parser_local_speaker_resolution(tmp_path):
     """
-    Validates complete Skyrim relationship chain:
-    INFO (ANAM) -> NPC_ (VTCK) -> VTYP (EDID='FemaleCommander') -> StringEntry with voice_type='FemaleCommander'.
+    Test 1 (Local Chain): INFO -> local NPC_ -> local VTCK -> local VTYP -> EDID.
+    Verifies full resolution when all records are defined locally within the plugin.
     """
     esp_path = tmp_path / "LydiaQuest.esp"
-    tes4_header = b"TES4" + struct.pack("<IIIIHH", 0, 0, 0, 0, 44, 0)
 
     # 1. VTYP record: FormID 0x00010001 with EDID "FemaleCommander"
-    vtyp_edid = b"EDID" + struct.pack("<H", 16) + b"FemaleCommander\x00"
-    vtyp_rec = b"VTYP" + struct.pack("<IIIIHH", len(vtyp_edid), 0, 0x00010001, 0, 44, 0) + vtyp_edid
+    vtyp_body = make_subrecord(b"EDID", b"FemaleCommander\x00")
+    vtyp_rec = make_record(b"VTYP", 0x00010001, vtyp_body)
 
     # 2. NPC_ record: FormID 0x00020002 with EDID "LydiaNPC", FULL "Lydia", and VTCK 0x00010001
-    npc_edid = b"EDID" + struct.pack("<H", 9) + b"LydiaNPC\x00"
-    npc_full = b"FULL" + struct.pack("<H", 6) + b"Lydia\x00"
-    npc_vtck = b"VTCK" + struct.pack("<H", 4) + struct.pack("<I", 0x00010001)
-    npc_body = npc_edid + npc_full + npc_vtck
-    npc_rec = b"NPC_" + struct.pack("<IIIIHH", len(npc_body), 0, 0x00020002, 0, 44, 0) + npc_body
+    npc_body = (
+        make_subrecord(b"EDID", b"LydiaNPC\x00") +
+        make_subrecord(b"FULL", b"Lydia\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00010001))
+    )
+    npc_rec = make_record(b"NPC_", 0x00020002, npc_body)
 
     # 3. INFO record: FormID 0x00030003 with ANAM 0x00020002 (Lydia) and NAM1 dialogue text
     text = b"I am sworn to carry your burdens.\x00"
-    info_anam = b"ANAM" + struct.pack("<H", 4) + struct.pack("<I", 0x00020002)
-    info_nam1 = b"NAM1" + struct.pack("<H", len(text)) + text
-    info_body = info_anam + info_nam1
-    info_rec = b"INFO" + struct.pack("<IIIIHH", len(info_body), 0, 0x00030003, 0, 44, 0) + info_body
+    info_body = (
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00020002)) +
+        make_subrecord(b"NAM1", text)
+    )
+    info_rec = make_record(b"INFO", 0x00030003, info_body)
 
-    # Combine into file with GRUP
     total_recs = vtyp_rec + npc_rec + info_rec
-    grup_header = b"GRUP" + struct.pack("<I4sIII", 24 + len(total_recs), b"INFO", 0, 0, 0)
-    esp_path.write_bytes(tes4_header + grup_header + total_recs)
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"INFO", total_recs))
 
     entries = parse_esp_file(esp_path)
     assert len(entries) >= 1
@@ -97,61 +122,856 @@ def test_esp_parser_full_speaker_resolution(tmp_path):
     assert dialog_entry.voice_type == "FemaleCommander"
 
 
-def test_esp_parser_vanilla_master_voice_resolution(tmp_path):
+def test_esp_parser_skyrim_master_speaker_resolution(tmp_path):
     """
-    Validates resolution of verified vanilla Skyrim master VoiceType FormIDs (0x00013ADA -> 'MaleBrute').
+    Test 2 (Single Master): INFO in MyMod.esp referencing NPC defined ONLY in Skyrim.esm fixture.
+    Skyrim.esm: NPC_ (0x0001A697) -> VTCK (0x00013AD8) -> VTYP EDID 'MaleCommander'.
+    MyMod.esp: INFO (0x01000050) -> ANAM 0x0001A697 (mod_index 0 -> Skyrim.esm).
     """
-    esp_path = tmp_path / "BanditQuest.esp"
-    tes4_header = b"TES4" + struct.pack("<IIIIHH", 0, 0, 0, 0, 44, 0)
+    # 1. Create master fixture: Skyrim.esm
+    skyrim_esm = tmp_path / "Skyrim.esm"
+    vtyp_body = make_subrecord(b"EDID", b"MaleCommander\x00")
+    vtyp_rec = make_record(b"VTYP", 0x00013AD8, vtyp_body)
 
-    # NPC_ record with VTCK pointing to verified Skyrim.esm MaleBrute (0x00013ADA)
-    npc_edid = b"EDID" + struct.pack("<H", 11) + b"BanditBoss\x00"
-    npc_vtck = b"VTCK" + struct.pack("<H", 4) + struct.pack("<I", 0x00013ADA)
-    npc_body = npc_edid + npc_vtck
-    npc_rec = b"NPC_" + struct.pack("<IIIIHH", len(npc_body), 0, 0x00040004, 0, 44, 0) + npc_body
+    npc_body = (
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
+        make_subrecord(b"FULL", b"Jarl Balgruuf\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
+    )
+    npc_rec = make_record(b"NPC_", 0x0001A697, npc_body)
+    skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + npc_rec))
 
-    # INFO dialogue spoken by BanditBoss
-    text = b"Never should have come here!\x00"
-    info_anam = b"ANAM" + struct.pack("<H", 4) + struct.pack("<I", 0x00040004)
-    info_nam1 = b"NAM1" + struct.pack("<H", len(text)) + text
-    info_body = info_anam + info_nam1
-    info_rec = b"INFO" + struct.pack("<IIIIHH", len(info_body), 0, 0x00050005, 0, 44, 0) + info_body
+    # 2. Create target mod: WhiterunQuest.esp declaring MAST Skyrim.esm
+    mod_esp = tmp_path / "WhiterunQuest.esp"
+    info_text = b"Whiterun stands strong with the Empire.\x00"
+    info_body = (
+        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
+        make_subrecord(b"NAM1", info_text)
+    )
+    info_rec = make_record(b"INFO", 0x01000050, info_body)
+    mod_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", info_rec))
 
-    total_recs = npc_rec + info_rec
-    grup_header = b"GRUP" + struct.pack("<I4sIII", 24 + len(total_recs), b"INFO", 0, 0, 0)
-    esp_path.write_bytes(tes4_header + grup_header + total_recs)
+    entries = parse_esp_file(mod_esp)
+    dialog_entry = next(e for e in entries if e.is_dialog)
+    assert dialog_entry.form_id == "01000050"
+    assert dialog_entry.text == "Whiterun stands strong with the Empire."
+    assert dialog_entry.actor == "Jarl Balgruuf"
+    assert dialog_entry.voice_type == "MaleCommander"
+    assert dialog_entry.is_dialog is True
+
+
+def test_esp_parser_transitive_master_speaker_resolution(tmp_path):
+    """
+    Test 3 (Transitive Master): INFO in MyMod.esp -> NPC in Update.esm -> VTCK in Skyrim.esm.
+    Verifies that MasterIndexData preserves each master's own declared MAST list and resolves
+    FormIDs within the relative index space of the defining master.
+
+    Hierarchy:
+      - Skyrim.esm (0 masters):
+          VTYP (0x00013AD8) -> EDID 'MaleCommander'
+      - Update.esm (MAST: ['Skyrim.esm']):
+          NPC_ (0x01000999) -> VTCK (0x00013AD8: mod_index 0 -> Skyrim.esm)
+      - MyMod.esp (MAST: ['Skyrim.esm', 'Update.esm']):
+          INFO (0x02000050) -> ANAM (0x01000999: mod_index 1 -> Update.esm)
+    """
+    # 1. Root Master: Skyrim.esm
+    skyrim_esm = tmp_path / "Skyrim.esm"
+    vtyp_rec = make_record(b"VTYP", 0x00013AD8, make_subrecord(b"EDID", b"MaleCommander\x00"))
+    skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"VTYP", vtyp_rec))
+
+    # 2. Intermediate Master: Update.esm (declares Skyrim.esm as master #0)
+    update_esm = tmp_path / "Update.esm"
+    npc_body = (
+        make_subrecord(b"EDID", b"UpdateGuardNPC\x00") +
+        make_subrecord(b"FULL", b"Update Guard\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))  # points to Skyrim.esm:0x013AD8
+    )
+    npc_rec = make_record(b"NPC_", 0x01000999, npc_body)
+    update_esm.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"NPC_", npc_rec))
+
+    # 3. Target Plugin: MyMod.esp (declares Skyrim.esm as #0 and Update.esm as #1)
+    mymod_esp = tmp_path / "MyMod.esp"
+    info_body = (
+        make_subrecord(b"ANAM", struct.pack("<I", 0x01000999)) +  # points to Update.esm:0x000999
+        make_subrecord(b"NAM1", b"I received new orders from the capital.\x00")
+    )
+    info_rec = make_record(b"INFO", 0x02000050, info_body)
+    mymod_esp.write_bytes(make_tes4_header(["Skyrim.esm", "Update.esm"]) + make_grup(b"INFO", info_rec))
+
+    entries = parse_esp_file(mymod_esp)
+    dialog_entry = next(e for e in entries if e.is_dialog)
+    assert dialog_entry.form_id == "02000050"
+    assert dialog_entry.text == "I received new orders from the capital."
+    assert dialog_entry.actor == "Update Guard"
+    assert dialog_entry.voice_type == "MaleCommander"
+
+
+def test_esp_parser_third_party_master_resolution(tmp_path):
+    """
+    Test 4 (Third-Party Master): MyMod.esp declaring multiple masters [Skyrim.esm, CustomMaster.esm],
+    referencing an NPC defined ONLY in CustomMaster.esm (master index 1).
+    """
+    masters_dir = tmp_path / "masters"
+    masters_dir.mkdir()
+
+    # 1. Skyrim.esm in masters_dir
+    skyrim_esm = masters_dir / "Skyrim.esm"
+    skyrim_esm.write_bytes(make_tes4_header())
+
+    # 2. CustomMaster.esm in masters_dir with custom NPC and VoiceType
+    custom_esm = masters_dir / "CustomMaster.esm"
+    vtyp_rec = make_record(b"VTYP", 0x00005001, make_subrecord(b"EDID", b"FemaleSultry\x00"))
+    npc_body = (
+        make_subrecord(b"EDID", b"SeraphinaNPC\x00") +
+        make_subrecord(b"FULL", b"Seraphina\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00005001))
+    )
+    npc_rec = make_record(b"NPC_", 0x00007002, npc_body)
+    custom_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + npc_rec))
+
+    # 3. Target plugin in tmp_path (different folder), passing master_search_paths
+    target_esp = tmp_path / "TargetMod.esp"
+    # ANAM has high byte 0x01 pointing to CustomMaster.esm (master index 1)
+    info_body = (
+        make_subrecord(b"ANAM", struct.pack("<I", 0x01007002)) +
+        make_subrecord(b"NAM1", b"Care to have a drink with me?\x00")
+    )
+    info_rec = make_record(b"INFO", 0x02000010, info_body)
+    target_esp.write_bytes(make_tes4_header(["Skyrim.esm", "CustomMaster.esm"]) + make_grup(b"INFO", info_rec))
+
+    entries = parse_esp_file(target_esp, master_search_paths=[masters_dir])
+    dialog_entry = next(e for e in entries if e.is_dialog)
+    assert dialog_entry.form_id == "02000010"
+    assert dialog_entry.text == "Care to have a drink with me?"
+    assert dialog_entry.actor == "Seraphina"
+    assert dialog_entry.voice_type == "FemaleSultry"
+
+
+def test_esp_parser_master_object_id_collision_isolation(tmp_path):
+    """
+    Test 5 (Collision Isolation): Two masters (MasterA.esm, MasterB.esm) having identical object IDs (0x001234),
+    proving that canonical RecordKey avoids any cross-contamination or confusion between masters.
+    """
+    # MasterA has NPC 0x001234 -> VoiceType "FemaleCommander"
+    master_a = tmp_path / "MasterA.esm"
+    vtyp_a = make_record(b"VTYP", 0x00000001, make_subrecord(b"EDID", b"FemaleCommander\x00"))
+    npc_a = make_record(
+        b"NPC_",
+        0x00001234,
+        make_subrecord(b"EDID", b"Alice\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000001))
+    )
+    master_a.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_a + npc_a))
+
+    # MasterB has NPC 0x001234 -> VoiceType "MaleBrute"
+    master_b = tmp_path / "MasterB.esm"
+    vtyp_b = make_record(b"VTYP", 0x00000002, make_subrecord(b"EDID", b"MaleBrute\x00"))
+    npc_b = make_record(
+        b"NPC_",
+        0x00001234,
+        make_subrecord(b"EDID", b"Bob\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000002))
+    )
+    master_b.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_b + npc_b))
+
+    # Target mod declaring masters [MasterA.esm, MasterB.esm]
+    target_esp = tmp_path / "CollisionMod.esp"
+    # Line 1 spoken by MasterA NPC (mod_index 0)
+    info_a = make_record(
+        b"INFO",
+        0x02000001,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00001234)) +
+        make_subrecord(b"NAM1", b"I am Alice from MasterA.\x00")
+    )
+    # Line 2 spoken by MasterB NPC (mod_index 1)
+    info_b = make_record(
+        b"INFO",
+        0x02000002,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x01001234)) +
+        make_subrecord(b"NAM1", b"I am Bob from MasterB.\x00")
+    )
+    target_esp.write_bytes(make_tes4_header(["MasterA.esm", "MasterB.esm"]) + make_grup(b"INFO", info_a + info_b))
+
+    entries = parse_esp_file(target_esp)
+    entry_alice = next(e for e in entries if e.form_id == "02000001" and e.is_dialog)
+    entry_bob = next(e for e in entries if e.form_id == "02000002" and e.is_dialog)
+
+    assert entry_alice.actor == "Alice"
+    assert entry_alice.voice_type == "FemaleCommander"
+    assert entry_bob.actor == "Bob"
+    assert entry_bob.voice_type == "MaleBrute"
+
+
+def test_esp_parser_missing_master_safe_fallback(tmp_path):
+    """
+    Test 6 (Missing Master): Missing master file must not crash, must not invent fake data (like 'MaleNord'),
+    and must cleanly result in voice_type is None.
+    """
+    mod_esp = tmp_path / "MissingMasterMod.esp"
+    info_body = (
+        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
+        make_subrecord(b"NAM1", b"Where is my master file?\x00")
+    )
+    info_rec = make_record(b"INFO", 0x01000006, info_body)
+    # Declares NonExistentMaster.esm which is absent on disk
+    mod_esp.write_bytes(make_tes4_header(["NonExistentMaster.esm"]) + make_grup(b"INFO", info_rec))
+
+    entries = parse_esp_file(mod_esp)
+    dialog_entry = next(e for e in entries if e.is_dialog)
+    assert dialog_entry.form_id == "01000006"
+    assert dialog_entry.actor == "Actor_0001A697"
+    assert dialog_entry.voice_type is None
+    assert dialog_entry.is_dialog is True
+
+
+def test_esp_parser_invalid_master_index(tmp_path):
+    """
+    Test 7 (Invalid Index): Out-of-bounds master index (e.g. mod_index 5 when 1 master declared)
+    must return unresolved (None) and NEVER fall back to current local plugin.
+    """
+    mod_esp = tmp_path / "InvalidIndexMod.esp"
+    # Local NPC in plugin (local index = 1)
+    local_npc = make_record(
+        b"NPC_",
+        0x01000555,
+        make_subrecord(b"EDID", b"LocalGuard\x00") +
+        make_subrecord(b"FULL", b"Local Guard\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x01000111))
+    )
+    local_vtyp = make_record(b"VTYP", 0x01000111, make_subrecord(b"EDID", b"MaleGuard\x00"))
+
+    # INFO referencing invalid mod_index 0x08 (0x08000555)
+    info_rec = make_record(
+        b"INFO",
+        0x01000999,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x08000555)) +
+        make_subrecord(b"NAM1", b"I have an invalid index.\x00")
+    )
+
+    mod_esp.write_bytes(
+        make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", local_vtyp + local_npc + info_rec)
+    )
+
+    resolved_key = _resolve_record_key(0x08000555, "InvalidIndexMod.esp", ["Skyrim.esm"])
+    assert resolved_key is None
+
+    entries = parse_esp_file(mod_esp)
+    dialog_entry = next(e for e in entries if e.form_id == "01000999")
+    assert dialog_entry.actor == "Actor_08000555"
+    assert dialog_entry.voice_type is None
+
+
+def test_esp_parser_master_read_only_immutability(tmp_path):
+    """
+    Test 8 (Read-Only Immutability): Verifies that parsing a mod referencing a master file strictly reads it,
+    leaving master file bytes and SHA256 hash completely unmodified.
+    """
+    master_path = tmp_path / "ImmutableMaster.esm"
+    vtyp_rec = make_record(b"VTYP", 0x00000010, make_subrecord(b"EDID", b"FemaleElf\x00"))
+    npc_rec = make_record(
+        b"NPC_",
+        0x00000020,
+        make_subrecord(b"EDID", b"ElfNPC\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000010))
+    )
+    master_path.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + npc_rec))
+
+    # Compute pre-parse SHA256
+    original_bytes = master_path.read_bytes()
+    original_sha256 = hashlib.sha256(original_bytes).hexdigest()
+
+    # Create target mod
+    mod_esp = tmp_path / "ReaderMod.esp"
+    info_rec = make_record(
+        b"INFO",
+        0x01000001,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00000020)) +
+        make_subrecord(b"NAM1", b"Testing read-only access.\x00")
+    )
+    mod_esp.write_bytes(make_tes4_header(["ImmutableMaster.esm"]) + make_grup(b"INFO", info_rec))
+
+    # Parse mod
+    entries = parse_esp_file(mod_esp)
+    dialog_entry = next(e for e in entries if e.is_dialog)
+    assert dialog_entry.voice_type == "FemaleElf"
+
+    # Verify post-parse SHA256 and bytes
+    post_bytes = master_path.read_bytes()
+    post_sha256 = hashlib.sha256(post_bytes).hexdigest()
+    assert post_sha256 == original_sha256
+    assert post_bytes == original_bytes
+
+
+def test_esp_parser_master_cache_single_parse(tmp_path, monkeypatch):
+    """
+    Test 9 (Master Cache): Verifies that when 500 dialogue records reference the same master,
+    parse_esp_file opens and indexes the master file from disk exactly once.
+    """
+    master_path = tmp_path / "CachedMaster.esm"
+    vtyp_rec = make_record(b"VTYP", 0x00000005, make_subrecord(b"EDID", b"MaleCommander\x00"))
+    npc_rec = make_record(
+        b"NPC_",
+        0x00000006,
+        make_subrecord(b"EDID", b"Commander\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000005))
+    )
+    master_path.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + npc_rec))
+
+    # Build 500 INFO records in target mod
+    info_recs = b""
+    for i in range(500):
+        info_body = (
+            make_subrecord(b"ANAM", struct.pack("<I", 0x00000006)) +
+            make_subrecord(b"NAM1", f"Order number {i}\x00".encode("utf-8"))
+        )
+        info_recs += make_record(b"INFO", 0x01000000 + i, info_body)
+
+    mod_esp = tmp_path / "BigQuest.esp"
+    mod_esp.write_bytes(make_tes4_header(["CachedMaster.esm"]) + make_grup(b"INFO", info_recs))
+
+    # Instrument MasterResolver.find_master_file and get_or_load_master
+    orig_find_master = MasterResolver.find_master_file
+    orig_get_or_load = MasterResolver.get_or_load_master
+    discovery_scan_count = 0
+    disk_parse_count = 0
+
+    def instrumented_find_master(self, master_name, origin_dir):
+        nonlocal discovery_scan_count
+        cache_key = (origin_dir.resolve(), master_name.lower())
+        if cache_key not in self._path_cache:
+            discovery_scan_count += 1
+        return orig_find_master(self, master_name, origin_dir)
+
+    def instrumented_get_or_load(self, master_name, origin_dir):
+        nonlocal disk_parse_count
+        master_file = self.find_master_file(master_name, origin_dir)
+        if master_file and master_file.resolve() not in self._cache:
+            disk_parse_count += 1
+        return orig_get_or_load(self, master_name, origin_dir)
+
+    monkeypatch.setattr(MasterResolver, "find_master_file", instrumented_find_master)
+    monkeypatch.setattr(MasterResolver, "get_or_load_master", instrumented_get_or_load)
+
+    entries = parse_esp_file(mod_esp)
+    assert len(entries) == 500
+    assert discovery_scan_count == 1, f"Expected exactly 1 master discovery scan, got {discovery_scan_count}"
+    assert disk_parse_count == 1, f"Expected exactly 1 disk read/parse, got {disk_parse_count}"
+
+    for e in entries:
+        assert e.voice_type == "MaleCommander"
+        assert e.actor == "Commander"
+
+
+def test_esp_parser_esl_light_plugin_explicit_handling(tmp_path):
+    """
+    Test 10 (ESL / Light Plugin): ESL/light plugin references (high byte 0xFE) must be explicitly detected,
+    return None for record key, and result in voice_type is None without raising unexpected errors.
+    """
+    # Raw FormID 0xFE001001 with mod_index 0xFE
+    rec_key = _resolve_record_key(0xFE001001, "LightPluginMod.esp", ["Skyrim.esm"])
+    assert rec_key is None
+
+    mod_esp = tmp_path / "LightMod.esp"
+    info_body = (
+        make_subrecord(b"ANAM", struct.pack("<I", 0xFE001001)) +
+        make_subrecord(b"NAM1", b"Spoken by a light plugin NPC.\x00")
+    )
+    info_rec = make_record(b"INFO", 0x01000001, info_body)
+    mod_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", info_rec))
+
+    entries = parse_esp_file(mod_esp)
+    dialog_entry = next(e for e in entries if e.is_dialog)
+    assert dialog_entry.voice_type is None
+    assert dialog_entry.actor == "Actor_FE001001"
+
+
+def test_esp_parser_origin_record_resolution_no_mast_override(tmp_path):
+    """
+    Test 11 (Origin-Record Resolution & No MAST-Order Override):
+    Demonstrates that the parser resolves FormID references strictly against their
+    origin owner plugin (RecordKey.plugin), and does NOT use the TES4.MAST declaration
+    order as an arbitrary winning override heuristic.
+
+    Hierarchy:
+      - Skyrim.esm: NPC (0x0001A697) -> VTCK "MaleCommander", FULL "Jarl Balgruuf"
+      - Patch.esm (MAST: ['Skyrim.esm']): has an override for NPC (0x0001A697) with VTCK "MaleBrute"
+      - TargetMod.esp (MAST: ['Skyrim.esm', 'Patch.esm']): INFO pointing to ANAM 0x0001A697
+        (mod_index 0 -> points to Skyrim.esm:0x0001A697)
+        -> Resolves strictly to origin record in Skyrim.esm ('MaleCommander' / 'Jarl Balgruuf').
+           Effective load-order WinningOverride is deferred to runtime discovery.
+    """
+    # 1. Skyrim.esm (Origin master)
+    skyrim_esm = tmp_path / "Skyrim.esm"
+    vtyp_skyrim = make_record(b"VTYP", 0x00013AD8, make_subrecord(b"EDID", b"MaleCommander\x00"))
+    npc_skyrim = make_record(
+        b"NPC_",
+        0x0001A697,
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
+        make_subrecord(b"FULL", b"Jarl Balgruuf\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
+    )
+    skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_skyrim + npc_skyrim))
+
+    # 2. Patch.esm (Intermediate master with override for 0x0001A697)
+    patch_esm = tmp_path / "Patch.esm"
+    vtyp_patch = make_record(b"VTYP", 0x01013ADA, make_subrecord(b"EDID", b"MaleBrute\x00"))
+    npc_patch_override = make_record(
+        b"NPC_",
+        0x0001A697,  # mod_index 0 -> points to Skyrim.esm:0x01A697
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
+        make_subrecord(b"FULL", b"Jarl Balgruuf (Patched)\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x01013ADA))
+    )
+    patch_esm.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"NPC_", vtyp_patch + npc_patch_override))
+
+    # 3. Target mod declaring Skyrim.esm and Patch.esm
+    target_esp = tmp_path / "TargetMod.esp"
+    info_body = (
+        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
+        make_subrecord(b"NAM1", b"I speak with origin strength.\x00")
+    )
+    info_rec = make_record(b"INFO", 0x02000001, info_body)
+    target_esp.write_bytes(make_tes4_header(["Skyrim.esm", "Patch.esm"]) + make_grup(b"INFO", info_rec))
+
+    entries = parse_esp_file(target_esp)
+    dialog_entry = next(e for e in entries if e.is_dialog)
+    assert dialog_entry.voice_type == "MaleCommander"
+    assert dialog_entry.actor == "Jarl Balgruuf"
+
+
+def test_esp_parser_local_tplt_resolution(tmp_path):
+    """
+    Test 12 (TPLT Local): When an NPC has no direct VTCK but specifies a TPLT template NPC,
+    the resolver traverses the template relationship to resolve VoiceType.
+    """
+    esp_path = tmp_path / "TemplateQuest.esp"
+
+    # 1. VTYP record: FormID 0x00010001 ("FemaleEvenToned")
+    vtyp_rec = make_record(b"VTYP", 0x00010001, make_subrecord(b"EDID", b"FemaleEvenToned\x00"))
+
+    # 2. Template NPC: FormID 0x00020001 with VTCK 0x00010001
+    template_npc = make_record(
+        b"NPC_",
+        0x00020001,
+        make_subrecord(b"EDID", b"BaseTemplateNPC\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00010001))
+    )
+
+    # 3. Instance NPC: FormID 0x00020002 with TPLT 0x00020001 (NO direct VTCK)
+    instance_npc = make_record(
+        b"NPC_",
+        0x00020002,
+        make_subrecord(b"EDID", b"InheritedNPC\x00") +
+        make_subrecord(b"FULL", b"Inherited Citizen\x00") +
+        make_subrecord(b"TPLT", struct.pack("<I", 0x00020001))
+    )
+
+    # 4. INFO record spoken by Instance NPC
+    info_rec = make_record(
+        b"INFO",
+        0x00030001,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00020002)) +
+        make_subrecord(b"NAM1", b"I inherited my voice from a template.\x00")
+    )
+
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + template_npc + instance_npc + info_rec))
 
     entries = parse_esp_file(esp_path)
     dialog_entry = next(e for e in entries if e.is_dialog)
-    assert dialog_entry.form_id == "00050005"
-    assert dialog_entry.text == "Never should have come here!"
-    assert dialog_entry.actor == "BanditBoss"
-    assert dialog_entry.voice_type == "MaleBrute"
+    assert dialog_entry.voice_type == "FemaleEvenToned"
+    assert dialog_entry.actor == "Inherited Citizen"
 
 
-def test_esp_parser_unresolved_master_npc_fallback(tmp_path):
+def test_esp_parser_master_tplt_resolution(tmp_path):
     """
-    Validates boundary behavior when an INFO record points via ANAM to an external master NPC
-    that is not defined or overridden locally in the plugin.
-    Cleanly falls back to 'MaleNord' for dialogue without crashing or corrupting data.
+    Test 13 (TPLT Master): An NPC in MyMod.esp references a template NPC in MasterA.esm,
+    which in turn inherits VTCK from Skyrim.esm.
     """
-    esp_path = tmp_path / "ExternalMasterNPC.esp"
-    tes4_header = b"TES4" + struct.pack("<IIIIHH", 0, 0, 0, 0, 44, 0)
+    # 1. Skyrim.esm with VTYP
+    skyrim_esm = tmp_path / "Skyrim.esm"
+    vtyp_rec = make_record(b"VTYP", 0x00013AD8, make_subrecord(b"EDID", b"MaleCommander\x00"))
+    skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"VTYP", vtyp_rec))
 
-    # INFO record referencing master NPC FormID 0x0001A697 (not defined in this file)
-    text = b"May the gods watch over your battles, friend.\x00"
-    info_anam = b"ANAM" + struct.pack("<H", 4) + struct.pack("<I", 0x0001A697)
-    info_nam1 = b"NAM1" + struct.pack("<H", len(text)) + text
-    info_body = info_anam + info_nam1
-    info_rec = b"INFO" + struct.pack("<IIIIHH", len(info_body), 0, 0x00060006, 0, 44, 0) + info_body
+    # 2. MasterA.esm with Base Template NPC pointing to Skyrim VTYP
+    master_a = tmp_path / "MasterA.esm"
+    base_npc = make_record(
+        b"NPC_",
+        0x01000100,
+        make_subrecord(b"EDID", b"MasterBaseTemplate\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
+    )
+    master_a.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"NPC_", base_npc))
 
-    grup_header = b"GRUP" + struct.pack("<I4sIII", 24 + len(info_rec), b"INFO", 0, 0, 0)
-    esp_path.write_bytes(tes4_header + grup_header + info_rec)
+    # 3. TargetMod.esp with NPC pointing via TPLT to MasterA.esm:0x01000100
+    target_esp = tmp_path / "TargetMod.esp"
+    mod_npc = make_record(
+        b"NPC_",
+        0x02000200,
+        make_subrecord(b"EDID", b"ModSoldier\x00") +
+        make_subrecord(b"FULL", b"Mod Soldier\x00") +
+        make_subrecord(b"TPLT", struct.pack("<I", 0x01000100))  # mod_index 1 -> MasterA.esm
+    )
+    info_rec = make_record(
+        b"INFO",
+        0x02000300,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x02000200)) +
+        make_subrecord(b"NAM1", b"Ready for battle!\x00")
+    )
+    target_esp.write_bytes(make_tes4_header(["Skyrim.esm", "MasterA.esm"]) + make_grup(b"INFO", mod_npc + info_rec))
+
+    entries = parse_esp_file(target_esp)
+    dialog_entry = next(e for e in entries if e.is_dialog)
+    assert dialog_entry.voice_type == "MaleCommander"
+    assert dialog_entry.actor == "Mod Soldier"
+
+
+def test_esp_parser_tplt_cycle_protection(tmp_path):
+    """
+    Test 14 (TPLT Cycle Protection): Circular TPLT template references (NPC A -> NPC B -> NPC A)
+    must be cleanly caught by cycle detection, returning voice_type is None without recursion errors.
+    """
+    esp_path = tmp_path / "CyclicTemplate.esp"
+
+    # NPC A (0x00010001) -> TPLT NPC B (0x00010002)
+    npc_a = make_record(
+        b"NPC_",
+        0x00010001,
+        make_subrecord(b"EDID", b"CyclicA\x00") +
+        make_subrecord(b"FULL", b"Cyclic Actor A\x00") +
+        make_subrecord(b"TPLT", struct.pack("<I", 0x00010002))
+    )
+
+    # NPC B (0x00010002) -> TPLT NPC A (0x00010001)
+    npc_b = make_record(
+        b"NPC_",
+        0x00010002,
+        make_subrecord(b"EDID", b"CyclicB\x00") +
+        make_subrecord(b"FULL", b"Cyclic Actor B\x00") +
+        make_subrecord(b"TPLT", struct.pack("<I", 0x00010001))
+    )
+
+    # INFO spoken by NPC A
+    info_rec = make_record(
+        b"INFO",
+        0x00010003,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) +
+        make_subrecord(b"NAM1", b"I am stuck in an infinite template loop.\x00")
+    )
+
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"NPC_", npc_a + npc_b + info_rec))
 
     entries = parse_esp_file(esp_path)
-    assert len(entries) == 1
-    dialog_entry = entries[0]
-    assert dialog_entry.form_id == "00060006"
-    assert dialog_entry.actor == "Actor_0001A697"
-    assert dialog_entry.voice_type == "MaleNord"
-    assert dialog_entry.is_dialog is True
+    dialog_entry = next(e for e in entries if e.is_dialog)
+    assert dialog_entry.voice_type is None
+    assert dialog_entry.actor == "Cyclic Actor A"
+
+
+def test_esp_parser_localized_plugin_stringid_guard(tmp_path):
+    """
+    Test 15 (Localized Master StringID Guard):
+    When a master has FLAG_LOCALIZED (0x80) set in its TES4 header (as in vanilla Skyrim.esm),
+    subrecords like FULL contain 4-byte uint32 StringIDs referencing external .STRINGS tables,
+    not raw inline text.
+    The parser must NOT treat 4-byte printable values as actor text, falling back safely
+    to EDID (if present) or Actor_<FormID>.
+    """
+    FLAG_LOCALIZED = 0x00000080
+
+    # 1. Localized master with NPC having 4-byte ASCII FULL (e.g. b"HERO" -> StringID 0x4F524548) and EDID
+    master_path = tmp_path / "LocalizedMaster.esm"
+    vtyp_rec = make_record(b"VTYP", 0x00000001, make_subrecord(b"EDID", b"MaleCommander\x00"))
+
+    # NPC 1: FULL is 4 printable bytes (b"HERO"), EDID is "GuardCommander"
+    npc1 = make_record(
+        b"NPC_",
+        0x00000010,
+        make_subrecord(b"EDID", b"GuardCommander\x00") +
+        make_subrecord(b"FULL", b"HERO") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00000001))
+    )
+
+    # NPC 2: FULL is 4 printable bytes (b"KING"), NO EDID
+    npc2 = make_record(
+        b"NPC_",
+        0x00000020,
+        make_subrecord(b"FULL", b"KING") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00000001))
+    )
+
+    master_path.write_bytes(
+        make_tes4_header([], flags=FLAG_LOCALIZED) +
+        make_grup(b"NPC_", vtyp_rec + npc1 + npc2)
+    )
+
+    # 2. Target mod referencing the NPCs in the localized master
+    esp_path = tmp_path / "MyMod.esp"
+    info1 = make_record(
+        b"INFO",
+        0x01000001,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00000010)) +
+        make_subrecord(b"NAM1", b"Order from commander.\x00")
+    )
+    info2 = make_record(
+        b"INFO",
+        0x01000002,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00000020)) +
+        make_subrecord(b"NAM1", b"Royal decree.\x00")
+    )
+
+    esp_path.write_bytes(
+        make_tes4_header(["LocalizedMaster.esm"]) +
+        make_grup(b"INFO", info1 + info2)
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialog1 = next(e for e in entries if e.form_id == "01000001")
+    dialog2 = next(e for e in entries if e.form_id == "01000002")
+
+    # NPC 1: should use EDID "GuardCommander", NOT raw 4-byte StringID "HERO"
+    assert dialog1.actor == "GuardCommander"
+    assert dialog1.voice_type == "MaleCommander"
+
+    # NPC 2: without EDID, should fall back to Actor_00000020, NOT raw 4-byte StringID "KING"
+    assert dialog2.actor == "Actor_00000020"
+    assert dialog2.voice_type == "MaleCommander"
+
+
+def test_esp_parser_missing_master_repeated_warning_suppression(tmp_path, caplog, monkeypatch):
+    """
+    Test 16 (Missing Master Warning Suppression & Negative Cache):
+    When a mod contains 500 dialogue records referencing an absent master,
+    the resolver must:
+      - Perform exactly 1 filesystem discovery scan for the missing master.
+      - Emit exactly 1 missing-master warning in logs (suppressing 499 duplicate warnings).
+      - Gracefully set voice_type=None on all entries without raising any exception.
+    """
+    import logging
+
+    # Build 500 INFO records in target mod pointing to an NPC in MissingMaster.esm
+    info_recs = b""
+    for i in range(500):
+        info_body = (
+            make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) +
+            make_subrecord(b"NAM1", f"Missing master line {i}\x00".encode("utf-8"))
+        )
+        info_recs += make_record(b"INFO", 0x01000000 + i, info_body)
+
+    mod_esp = tmp_path / "ModWithMissingMaster.esp"
+    mod_esp.write_bytes(make_tes4_header(["MissingMaster.esm"]) + make_grup(b"INFO", info_recs))
+
+    orig_find_master = MasterResolver.find_master_file
+    discovery_scan_count = 0
+
+    def instrumented_find_master(self, master_name, origin_dir):
+        nonlocal discovery_scan_count
+        cache_key = (origin_dir.resolve(), master_name.lower())
+        if cache_key not in self._path_cache:
+            discovery_scan_count += 1
+        return orig_find_master(self, master_name, origin_dir)
+
+    monkeypatch.setattr(MasterResolver, "find_master_file", instrumented_find_master)
+
+    with caplog.at_level(logging.WARNING):
+        entries = parse_esp_file(mod_esp)
+
+    assert len(entries) == 500
+    assert discovery_scan_count == 1, f"Expected 1 discovery scan, got {discovery_scan_count}"
+
+    missing_warnings = [
+        rec.message for rec in caplog.records
+        if "missingmaster.esm" in rec.message.lower() and "could not be found" in rec.message
+    ]
+    assert len(missing_warnings) == 1, f"Expected exactly 1 missing master warning, got {len(missing_warnings)}"
+
+    for e in entries:
+        assert e.voice_type is None
+        assert e.actor == "Actor_00010001"
+
+
+def test_esp_parser_target_plugin_master_npc_override(tmp_path):
+    """
+    Test 17 (Target-Plugin Master Override):
+    When the target plugin being parsed overrides an NPC record originally defined in a master file
+    (e.g. overriding Skyrim.esm:0x0001A697 to have a new VoiceType and Actor Name),
+    the resolver MUST query the target plugin's own override first before falling back to the master.
+    """
+    skyrim_dir = tmp_path / "Data"
+    skyrim_dir.mkdir()
+
+    # 1. Skyrim.esm with vanilla VoiceTypes and vanilla Balgruuf
+    skyrim_esm = skyrim_dir / "Skyrim.esm"
+    vtyp_male = make_record(b"VTYP", 0x00013AD8, make_subrecord(b"EDID", b"MaleCommander\x00"))
+    vtyp_female = make_record(b"VTYP", 0x00013AD9, make_subrecord(b"EDID", b"FemaleSultry\x00"))
+    vanilla_balgruuf = make_record(
+        b"NPC_",
+        0x0001A697,
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
+        make_subrecord(b"FULL", b"Jarl Balgruuf\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
+    )
+    skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_male + vtyp_female + vanilla_balgruuf))
+
+    # 2. TargetMod.esp with an override of 0x0001A697 (mod_index 0 = Skyrim.esm)
+    # Changed to FemaleSultry (0x00013AD9) and "Jarl Balgruuf Reborn"
+    target_mod = tmp_path / "TargetMod.esp"
+    balgruuf_override = make_record(
+        b"NPC_",
+        0x0001A697,  # mod_index 0 -> Skyrim.esm
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
+        make_subrecord(b"FULL", b"Jarl Balgruuf Reborn\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD9))
+    )
+    info_rec = make_record(
+        b"INFO",
+        0x01000100,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
+        make_subrecord(b"NAM1", b"I have been reborn.\x00")
+    )
+    target_mod.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", balgruuf_override + info_rec))
+
+    entries = parse_esp_file(target_mod, master_search_paths=[skyrim_dir])
+    dialog = next(e for e in entries if e.is_dialog)
+
+    # Must resolve to the target plugin's own override, NOT the vanilla master copy!
+    assert dialog.actor == "Jarl Balgruuf Reborn"
+    assert dialog.voice_type == "FemaleSultry"
+
+
+def test_esp_parser_corrupt_master_negative_cache(tmp_path, monkeypatch):
+    """
+    Test 18 (Corrupt/Invalid Master Negative Cache):
+    When a master file exists on disk but is unreadable or has a corrupt header,
+    the resolver must cache the failure negatively, attempting to read/validate it exactly ONCE
+    even when 500 dialogue records reference it.
+    """
+    master_dir = tmp_path / "Data"
+    master_dir.mkdir()
+    corrupt_master = master_dir / "CorruptMaster.esm"
+    corrupt_master.write_bytes(b"INVALID_HEADER_GARBAGE_BYTES_1234567890")
+
+    info_recs = b""
+    for i in range(500):
+        info_body = (
+            make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) +
+            make_subrecord(b"NAM1", f"Corrupt master line {i}\x00".encode("utf-8"))
+        )
+        info_recs += make_record(b"INFO", 0x01000000 + i, info_body)
+
+    mod_esp = tmp_path / "ModWithCorruptMaster.esp"
+    mod_esp.write_bytes(make_tes4_header(["CorruptMaster.esm"]) + make_grup(b"INFO", info_recs))
+
+    orig_open = open
+    open_count = 0
+
+    def instrumented_open(file, *args, **kwargs):
+        nonlocal open_count
+        if "CorruptMaster.esm" in str(file):
+            open_count += 1
+        return orig_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", instrumented_open)
+
+    entries = parse_esp_file(mod_esp, master_search_paths=[master_dir])
+    assert len(entries) == 500
+    assert open_count == 1, f"Expected exactly 1 read attempt for corrupt master, got {open_count}"
+    for e in entries:
+        assert e.voice_type is None
+
+
+def test_esp_parser_warning_dedup_esl_and_invalid_index(tmp_path, caplog):
+    """
+    Test 19 (Warning Deduplication for ESL & Invalid Master Index):
+    When a plugin contains hundreds of identical ESL FormIDs (0xFE...) or out-of-bounds master indexes,
+    warnings must be deduplicated so logs are not flooded with 500 identical warning messages.
+    """
+    import logging
+
+    # 500 ESL dialogs + 500 Invalid Index dialogs
+    info_recs = b""
+    for i in range(500):
+        info_esl = (
+            make_subrecord(b"ANAM", struct.pack("<I", 0xFE001001)) +
+            make_subrecord(b"NAM1", f"ESL line {i}\x00".encode("utf-8"))
+        )
+        info_invalid = (
+            make_subrecord(b"ANAM", struct.pack("<I", 0x09001001)) +
+            make_subrecord(b"NAM1", f"Invalid index line {i}\x00".encode("utf-8"))
+        )
+        info_recs += make_record(b"INFO", 0x01000000 + i, info_esl)
+        info_recs += make_record(b"INFO", 0x01001000 + i, info_invalid)
+
+    mod_esp = tmp_path / "ModWithSpamFormIDs.esp"
+    mod_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", info_recs))
+
+    with caplog.at_level(logging.WARNING):
+        entries = parse_esp_file(mod_esp)
+
+    assert len(entries) == 1000
+
+    esl_warnings = [rec.message for rec in caplog.records if "ESL/light plugin FormID" in rec.message]
+    invalid_warnings = [rec.message for rec in caplog.records if "invalid master index" in rec.message]
+
+    assert len(esl_warnings) == 1, f"Expected 1 deduplicated ESL warning, got {len(esl_warnings)}"
+    assert len(invalid_warnings) == 1, f"Expected 1 deduplicated invalid index warning, got {len(invalid_warnings)}"
+
+
+def test_esp_parser_localized_target_safety(tmp_path, caplog):
+    """
+    Test 20 (Localized Target Safety):
+    When a target plugin has FLAG_LOCALIZED enabled in its TES4 header,
+    subrecords contain binary 4-byte uint32 StringIDs referencing external .STRINGS tables.
+    The parser must NOT treat these StringIDs as translatable text inline, and must emit
+    a clear warning that localized string tables are unsupported.
+    """
+    import logging
+    FLAG_LOCALIZED = 0x00000080
+
+    mod_esp = tmp_path / "LocalizedPlugin.esp"
+    # Create an INFO record where NAM1 is 4 bytes binary StringID 0x00010A3B
+    info_body = (
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) +
+        make_subrecord(b"NAM1", struct.pack("<I", 0x00010A3B))
+    )
+    info_rec = make_record(b"INFO", 0x01000001, info_body)
+    mod_esp.write_bytes(make_tes4_header([], flags=FLAG_LOCALIZED) + make_grup(b"INFO", info_rec))
+
+    with caplog.at_level(logging.WARNING):
+        entries = parse_esp_file(mod_esp)
+
+    # Must NOT emit the 4-byte StringID as translatable text
+    assert len(entries) == 0
+
+    localized_warnings = [rec.message for rec in caplog.records if "FLAG_LOCALIZED" in rec.message]
+    assert len(localized_warnings) >= 1
+
+
+def test_esp_parser_isolated_job_skyrim_data_resolution(tmp_path):
+    """
+    Test 21 (Skyrim Data Path in Isolated Job Directory):
+    Simulates a plugin copied to an isolated job directory (e.g. output/jobs/<uuid>/Mod.esp)
+    resolving Skyrim.esm via the explicit master_search_paths pointing to Skyrim's Data directory.
+    """
+    data_dir = tmp_path / "SkyrimData"
+    data_dir.mkdir()
+    skyrim_esm = data_dir / "Skyrim.esm"
+    vtyp_rec = make_record(b"VTYP", 0x00013AD8, make_subrecord(b"EDID", b"MaleCommander\x00"))
+    npc_rec = make_record(
+        b"NPC_",
+        0x0001A697,
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
+        make_subrecord(b"FULL", b"Jarl Balgruuf\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
+    )
+    skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + npc_rec))
+
+    job_dir = tmp_path / "output" / "jobs" / "12345"
+    job_dir.mkdir(parents=True)
+    job_esp = job_dir / "CopiedMod.esp"
+    info_rec = make_record(
+        b"INFO",
+        0x01000001,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
+        make_subrecord(b"NAM1", b"Greetings from the Jarl.\x00")
+    )
+    job_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", info_rec))
+
+    entries = parse_esp_file(job_esp, master_search_paths=[data_dir])
+    dialog = next(e for e in entries if e.is_dialog)
+    assert dialog.actor == "Jarl Balgruuf"
+    assert dialog.voice_type == "MaleCommander"

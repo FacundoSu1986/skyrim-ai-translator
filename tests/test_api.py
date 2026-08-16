@@ -141,3 +141,255 @@ def test_inject_invalid_job():
     })
     assert res.status_code == 404
 
+
+def test_mo2_start_with_skyrim_data_path(tmp_path):
+    mo2_dir = tmp_path / "mods"
+    mod_folder = mo2_dir / "SkyrimQuest"
+    mod_folder.mkdir(parents=True)
+    skyrim_data = tmp_path / "SkyrimData"
+    skyrim_data.mkdir()
+
+    # 1. Valid skyrim_data_path -> accepted
+    res_valid = client.post("/api/mo2/start", json={
+        "mo2_path": str(mo2_dir),
+        "mod_name": "SkyrimQuest",
+        "skyrim_data_path": str(skyrim_data),
+        "target_lang": "Spanish",
+        "generate_voice": False
+    })
+    assert res_valid.status_code == 200
+    job_id = res_valid.json()["job_id"]
+    assert jobs[job_id]["config"]["skyrim_data_path"] == str(skyrim_data)
+
+    # 2. Missing / None skyrim_data_path -> allowed
+    res_none = client.post("/api/mo2/start", json={
+        "mo2_path": str(mo2_dir),
+        "mod_name": "SkyrimQuest",
+        "skyrim_data_path": None,
+        "target_lang": "Spanish",
+        "generate_voice": False
+    })
+    assert res_none.status_code == 200
+
+    # 3. Invalid / non-existent skyrim_data_path -> rejected HTTP 400
+    res_invalid = client.post("/api/mo2/start", json={
+        "mo2_path": str(mo2_dir),
+        "mod_name": "SkyrimQuest",
+        "skyrim_data_path": "Z:\\non_existent_skyrim_data_999",
+        "target_lang": "Spanish",
+        "generate_voice": False
+    })
+    assert res_invalid.status_code == 400
+    assert "Skyrim Data" in res_invalid.json()["detail"]
+
+
+def test_upload_skyrim_data_path_validation(tmp_path):
+    test_json = tmp_path / "ModA.json"
+    test_json.write_text('[{"FormID": "0001", "Text": "Test text"}]', encoding="utf-8")
+    skyrim_data = tmp_path / "SkyrimData"
+    skyrim_data.mkdir()
+
+    # 1. Valid skyrim_data_path in config -> accepted
+    with open(test_json, "rb") as f:
+        res_valid = client.post(
+            "/api/upload",
+            files={"file": ("ModA.json", f, "application/json")},
+            data={"config": json.dumps({"skyrim_data_path": str(skyrim_data)})}
+        )
+    assert res_valid.status_code == 200
+
+    # 2. Missing skyrim_data_path -> allowed
+    with open(test_json, "rb") as f:
+        res_none = client.post(
+            "/api/upload",
+            files={"file": ("ModA.json", f, "application/json")},
+            data={"config": json.dumps({"target_lang": "Spanish"})}
+        )
+    assert res_none.status_code == 200
+
+    # 3. Invalid skyrim_data_path -> rejected HTTP 400
+    with open(test_json, "rb") as f:
+        res_invalid = client.post(
+            "/api/upload",
+            files={"file": ("ModA.json", f, "application/json")},
+            data={"config": json.dumps({"skyrim_data_path": "Z:\\invalid_skyrim_data_path_123"})}
+        )
+    assert res_invalid.status_code == 400
+    assert "Skyrim Data" in res_invalid.json()["detail"]
+
+
+def test_websocket_empty_plugin_no_mock_fallback(tmp_path):
+    """Verify that an empty or localized plugin fails fast without injecting mock 'Welcome to...' or MaleNord."""
+    test_json = tmp_path / "EmptyMod.json"
+    test_json.write_text("[]", encoding="utf-8")
+
+    with open(test_json, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("EmptyMod.json", f, "application/json")},
+            data={"config": json.dumps({"generate_voice": True})}
+        )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+
+    # Connect to WebSocket and consume events
+    messages = []
+    with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+        while True:
+            try:
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg.get("status") in ["completed", "error"]:
+                    break
+            except Exception:
+                break
+
+    # Must fail fast with status="error" and error_code="NO_TRANSLATABLE_CONTENT"
+    assert jobs[job_id]["status"] == "error"
+    error_events = [m for m in messages if m.get("status") == "error"]
+    assert len(error_events) > 0
+    assert error_events[-1].get("error_code") == "NO_TRANSLATABLE_CONTENT"
+    assert isinstance(error_events[-1].get("error"), str)
+
+    # Must NOT contain fake mock text or voice
+    log_texts = " ".join(m.get("log", "") for m in messages)
+    assert "Welcome to" not in log_texts
+    assert "MaleNord" not in log_texts
+
+    # Build dir must NOT contain any DSD or ZIP
+    build_dir = Path(jobs[job_id]["output_dir"])
+    assert not (build_dir / "SKSE").exists()
+
+
+def test_websocket_unresolved_voice_fail_fast(tmp_path):
+    """Verify that dialogue with voice_type=None and generate_voice=True fails fast with 0 audio files and no auto-inject."""
+    test_json = tmp_path / "NoVoiceMod.json"
+    dialogue_data = [
+        {"FormID": "0005555A", "Text": "Who goes there?", "is_dialog": True, "voice_type": None}
+    ]
+    test_json.write_text(json.dumps(dialogue_data), encoding="utf-8")
+
+    with open(test_json, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("NoVoiceMod.json", f, "application/json")},
+            data={"config": json.dumps({"generate_voice": True, "auto_inject": True})}
+        )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+
+    messages = []
+    with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+        while True:
+            try:
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg.get("status") in ["completed", "error"]:
+                    break
+            except Exception:
+                break
+
+    # Must fail fast with status="error" and error_code="UNRESOLVED_VOICE_TYPES"
+    assert jobs[job_id]["status"] == "error"
+    error_events = [m for m in messages if m.get("status") == "error"]
+    assert len(error_events) > 0
+    assert error_events[-1].get("error_code") == "UNRESOLVED_VOICE_TYPES"
+    assert isinstance(error_events[-1].get("error"), str)
+
+    # Must NOT generate any audio files in Sound/Voice
+    build_dir = Path(jobs[job_id]["output_dir"])
+    voice_dir = build_dir / "Sound" / "Voice"
+    if voice_dir.exists():
+        audio_files = list(voice_dir.rglob("*.mp3"))
+        assert len(audio_files) == 0, f"Expected 0 audio files, got {audio_files}"
+
+
+def test_websocket_unresolved_voice_allowed_when_voice_disabled(tmp_path):
+    """Verify that dialogue with voice_type=None completes translation normally when generate_voice=False."""
+    test_json = tmp_path / "TextOnlyMod.json"
+    dialogue_data = [
+        {"FormID": "0007777A", "Text": "A letter from the Jarl.", "is_dialog": True, "voice_type": None}
+    ]
+    test_json.write_text(json.dumps(dialogue_data), encoding="utf-8")
+
+    with open(test_json, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("TextOnlyMod.json", f, "application/json")},
+            data={"config": json.dumps({"generate_voice": False})}
+        )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+
+    messages = []
+    with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+        while True:
+            try:
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg.get("status") in ["completed", "error"]:
+                    break
+            except Exception:
+                break
+
+    assert jobs[job_id]["status"] == "completed"
+    # DSD file was created
+    build_dir = Path(jobs[job_id]["output_dir"])
+    dsd_file = build_dir / "SKSE" / "Plugins" / "DSD" / "TextOnlyMod.json"
+    assert dsd_file.exists()
+
+
+def test_upload_esp_skyrim_data_path_flow(tmp_path):
+    """Verify that skyrim_data_path flows from /api/upload config to parse_esp_file master_search_paths."""
+    import struct
+    from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
+
+    # 1. Master in Skyrim Data path
+    skyrim_data = tmp_path / "SkyrimData"
+    skyrim_data.mkdir()
+    master_path = skyrim_data / "Skyrim.esm"
+    vtyp_rec = make_record(b"VTYP", 0x00010001, make_subrecord(b"EDID", b"MaleNord\x00"))
+    npc_rec = make_record(
+        b"NPC_",
+        0x0001A697,
+        make_subrecord(b"FULL", b"Balgruuf\x00") +
+        make_subrecord(b"VTCK", struct.pack("<I", 0x00010001))
+    )
+    master_path.write_bytes(make_tes4_header([]) + make_grup(b"NPC_", vtyp_rec + npc_rec))
+
+    # 2. Mod ESP referencing Balgruuf
+    mod_esp = tmp_path / "QuestMod.esp"
+    info_rec = make_record(
+        b"INFO",
+        0x01000001,
+        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
+        make_subrecord(b"NAM1", b"Greetings dragonborn.\x00")
+    )
+    mod_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", info_rec))
+
+    # 3. Upload with config containing skyrim_data_path and generate_voice=False
+    with open(mod_esp, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("QuestMod.esp", f, "application/octet-stream")},
+            data={"config": json.dumps({
+                "skyrim_data_path": str(skyrim_data),
+                "generate_voice": False
+            })}
+        )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+
+    messages = []
+    with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+        while True:
+            try:
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg.get("status") in ["completed", "error"]:
+                    break
+            except Exception:
+                break
+
+    assert jobs[job_id]["status"] == "completed"
+

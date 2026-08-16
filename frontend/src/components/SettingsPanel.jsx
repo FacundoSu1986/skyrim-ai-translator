@@ -3,6 +3,8 @@ export function SettingsPanel({
   onToggleSettings,
   targetLang,
   onTargetLangChange,
+  skyrimDataPath,
+  onSkyrimDataPathChange,
   generateVoice,
   onGenerateVoiceChange,
   voices = [],
@@ -54,6 +56,22 @@ export function SettingsPanel({
                   <option value="German">Alemán</option>
                   <option value="Italian">Italiano</option>
                 </select>
+              </div>
+            </div>
+
+            <div className="input-group">
+              <label htmlFor="skyrim-data-path">Ruta Skyrim Data (Masters)</label>
+              <div className="field-shell">
+                <span className="field-icon" aria-hidden="true">⛁</span>
+                <input
+                  id="skyrim-data-path"
+                  type="text"
+                  className="text-input"
+                  value={skyrimDataPath || ''}
+                  onChange={(event) => onSkyrimDataPathChange(event.target.value)}
+                  placeholder="Ej: E:\SteamLibrary\steamapps\common\Skyrim Special Edition\Data"
+                  disabled={isBusy}
+                />
               </div>
             </div>
 

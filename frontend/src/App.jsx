@@ -27,6 +27,9 @@ function App() {
 
   // Settings
   const [targetLang, setTargetLang] = useState('Spanish');
+  const [skyrimDataPath, setSkyrimDataPath] = useState(
+    localStorage.getItem('skyrim_data_path') || '',
+  );
   const [generateVoice, setGenerateVoice] = useState(true);
   const [autoInject, setAutoInject] = useState(true);
   const [voices, setVoices] = useState([]);
@@ -117,6 +120,11 @@ function App() {
   const handleApiKeyChange = (value) => {
     setApiKey(value);
     localStorage.setItem('skyrim_ai_key', value);
+  };
+
+  const handleSkyrimDataPathChange = (value) => {
+    setSkyrimDataPath(value);
+    localStorage.setItem('skyrim_data_path', value);
   };
 
   const scanMo2Mods = async (pathOverride) => {
@@ -247,6 +255,7 @@ function App() {
 
     const config = {
       target_lang: targetLang,
+      skyrim_data_path: skyrimDataPath.trim() || undefined,
       generate_voice: generateVoice,
       voice: selectedVoice,
       ...buildAiConfig(),
@@ -298,6 +307,7 @@ function App() {
     const payload = {
       mo2_path: mo2Path.trim(),
       mod_name: selectedMod,
+      skyrim_data_path: skyrimDataPath.trim() || undefined,
       target_lang: targetLang,
       generate_voice: generateVoice,
       voice: selectedVoice,
@@ -635,6 +645,8 @@ function App() {
             onToggleSettings={() => setShowSettings((prev) => !prev)}
             targetLang={targetLang}
             onTargetLangChange={setTargetLang}
+            skyrimDataPath={skyrimDataPath}
+            onSkyrimDataPathChange={handleSkyrimDataPathChange}
             generateVoice={generateVoice}
             onGenerateVoiceChange={setGenerateVoice}
             voices={voices}
