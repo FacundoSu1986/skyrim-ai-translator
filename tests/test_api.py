@@ -141,3 +141,21 @@ def test_inject_invalid_job():
     })
     assert res.status_code == 404
 
+
+def test_mo2_start_with_skyrim_data_path(tmp_path):
+    mo2_dir = tmp_path / "mods"
+    mod_folder = mo2_dir / "SkyrimQuest"
+    mod_folder.mkdir(parents=True)
+    skyrim_data = tmp_path / "SkyrimData"
+    skyrim_data.mkdir()
+
+    res = client.post("/api/mo2/start", json={
+        "mo2_path": str(mo2_dir),
+        "mod_name": "SkyrimQuest",
+        "skyrim_data_path": str(skyrim_data),
+        "target_lang": "Spanish",
+        "generate_voice": False
+    })
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+    assert jobs[job_id]["config"]["skyrim_data_path"] == str(skyrim_data)

@@ -116,6 +116,7 @@ AVAILABLE_VOICES = [
 class MO2TranslateRequest(BaseModel):
     mo2_path: str
     mod_name: str
+    skyrim_data_path: Optional[str] = None
     target_lang: str = "Spanish"
     generate_voice: bool = True
     voice: str = "es-ES-AlvaroNeural"
@@ -349,6 +350,15 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 source_mod_dir = Path(job["mo2_path"]) / job["mod_name"]
                 if source_mod_dir.is_dir():
                     master_search_paths.append(source_mod_dir)
+
+            skyrim_data_str = cfg.get("skyrim_data_path")
+            if skyrim_data_str:
+                data_dir = Path(skyrim_data_str)
+                if data_dir.is_dir():
+                    master_search_paths.append(data_dir)
+                else:
+                    logger.warning("Configured skyrim_data_path is not a valid directory: %s", skyrim_data_str)
+
             entries = await asyncio.to_thread(
                 parse_esp_file,
                 file_p,
@@ -390,6 +400,13 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         total_dialogs = len(dialog_entries)
 
         if generate_voice and dialog_entries:
+            unresolved_voice_count = sum(1 for e in dialog_entries if not e.voice_type)
+            if unresolved_voice_count > 0:
+                await log_msg(
+                    f"⚠️ {unresolved_voice_count}/{total_dialogs} diálogos sin VoiceType identificado (masters no disponibles en Skyrim Data).",
+                    63, "warning"
+                )
+
             await log_msg(f"🎙️ Generando voces neuronales ({total_dialogs} diálogos)...", 65, "audio")
             voice_base_dir = build_dir / "Sound" / "Voice" / f"{job['plugin_name']}.esp"
             voice_base_dir.mkdir(parents=True, exist_ok=True)
@@ -421,7 +438,10 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             await asyncio.gather(*[_gen_voice(entry) for entry in dialog_entries])
 
             if success_voice_count == total_dialogs:
-                await log_msg(f"✅ {success_voice_count}/{total_dialogs} archivos de voz neuronal organizados por VoiceType.", 85, "success")
+                if unresolved_voice_count == 0:
+                    await log_msg(f"✅ {success_voice_count}/{total_dialogs} archivos de voz neuronal organizados por VoiceType.", 85, "success")
+                else:
+                    await log_msg(f"⚠️ {success_voice_count}/{total_dialogs} archivos de voz generados ({unresolved_voice_count} sin subcarpeta VoiceType).", 85, "warning")
             else:
                 await log_msg(f"⚠️ {success_voice_count}/{total_dialogs} archivos de voz generados ({total_dialogs - success_voice_count} fallaron).", 85, "error")
         else:

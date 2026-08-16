@@ -140,7 +140,9 @@ def _extract_masters_from_tes4(body: bytes) -> list[str]:
 def _resolve_record_key(
     raw_form_id: int,
     current_plugin: str,
-    masters: Sequence[str]
+    masters: Sequence[str],
+    warned_esl: Optional[set[int]] = None,
+    warned_invalid_index: Optional[set[tuple[int, int]]] = None,
 ) -> Optional[RecordKey]:
     """
     Resolves a raw 32-bit FormID into a canonical RecordKey(plugin, object_id).
@@ -155,10 +157,13 @@ def _resolve_record_key(
     object_id = raw_form_id & 0x00FFFFFF
 
     if mod_index == 0xFE:
-        logger.warning(
-            "ESL/light plugin FormID 0x%08X master resolution: not supported yet",
-            raw_form_id
-        )
+        if warned_esl is None or 0xFE not in warned_esl:
+            if warned_esl is not None:
+                warned_esl.add(0xFE)
+            logger.warning(
+                "ESL/light plugin FormID 0x%08X master resolution: not supported yet",
+                raw_form_id
+            )
         return None
 
     num_masters = len(masters)
@@ -168,10 +173,14 @@ def _resolve_record_key(
     elif mod_index == num_masters:
         return RecordKey(plugin=_norm_plugin(current_plugin), object_id=object_id)
     else:
-        logger.warning(
-            "FormID 0x%08X has invalid master index %d (declared masters count: %d)",
-            raw_form_id, mod_index, num_masters
-        )
+        inv_key = (mod_index, num_masters)
+        if warned_invalid_index is None or inv_key not in warned_invalid_index:
+            if warned_invalid_index is not None:
+                warned_invalid_index.add(inv_key)
+            logger.warning(
+                "FormID 0x%08X has invalid master index %d (declared masters count: %d)",
+                raw_form_id, mod_index, num_masters
+            )
         return None
 
 
@@ -194,11 +203,15 @@ class MasterResolver:
     """
 
     def __init__(self, search_paths: Optional[Sequence[Path | str]] = None):
-        self.search_paths: list[Path] = [
-            Path(p) for p in (search_paths or []) if Path(p).is_dir()
-        ]
+        self.search_paths: list[Path] = []
+        for p in (search_paths or []):
+            path_obj = Path(p)
+            if path_obj.is_dir():
+                self.search_paths.append(path_obj)
+            else:
+                logger.warning("Search path '%s' does not exist or is not a directory", p)
         self._path_cache: dict[tuple[Path, str], Optional[Path]] = {}
-        self._cache: dict[Path, MasterIndexData] = {}
+        self._cache: dict[Path, Optional[MasterIndexData]] = {}
 
     def find_master_file(self, master_name: str, origin_dir: Path) -> Optional[Path]:
         """Locates a master file case-insensitively in origin_dir or search_paths, with caching."""
@@ -249,10 +262,12 @@ class MasterResolver:
                 data = f.read()
         except OSError as err:
             logger.error("Failed to read master file %s in read-only mode: %s", resolved_path, err)
+            self._cache[resolved_path] = None
             return None
 
         if len(data) < RECORD_HEADER_SIZE or data[0:4] != b"TES4":
             logger.warning("Master file %s is invalid or does not start with TES4 header", resolved_path)
+            self._cache[resolved_path] = None
             return None
 
         # Extract declared masters and localized status in the master's own TES4 header
@@ -328,12 +343,18 @@ def _find_npc_data(
     origin_dir: Path,
 ) -> tuple[Optional[int], Optional[int], Optional[str], str, list[str]]:
     """
-    Finds NPC record data in its owning (origin) plugin.
-    Effective winning overrides across load order are not supported in this phase.
+    Finds NPC record data, prioritizing the target plugin's own contained definitions
+    and overrides before querying external master files.
 
     Returns (vtck_raw, tplt_raw, actor_name, owning_plugin, owning_masters).
     """
-    if npc_key.plugin == _norm_plugin(local_plugin_name):
+    # 1. Target plugin overrides/definitions have highest priority
+    if (
+        npc_key in local_npc_vtck
+        or npc_key in local_npc_tplt
+        or npc_key in local_npc_name
+        or npc_key.plugin == _norm_plugin(local_plugin_name)
+    ):
         return (
             local_npc_vtck.get(npc_key),
             local_npc_tplt.get(npc_key),
@@ -342,6 +363,7 @@ def _find_npc_data(
             local_masters,
         )
 
+    # 2. Query origin master file
     origin_data = master_resolver.get_or_load_master(npc_key.plugin, origin_dir)
     if origin_data:
         return (
@@ -356,7 +378,7 @@ def _find_npc_data(
 
 
 def _resolve_voice_type_for_npc(
-    initial_npc_key: RecordKey,
+    speaker_key: RecordKey,
     local_plugin_name: str,
     local_masters: list[str],
     local_npc_vtck: dict[RecordKey, int],
@@ -365,22 +387,29 @@ def _resolve_voice_type_for_npc(
     local_vtyp_edid: dict[RecordKey, str],
     master_resolver: MasterResolver,
     origin_dir: Path,
-    max_depth: int = 10,
+    warned_esl: Optional[set[int]] = None,
+    warned_invalid_index: Optional[set[tuple[int, int]]] = None,
 ) -> tuple[Optional[str], Optional[str]]:
     """
-    Resolves (actor_name, voice_type) for an NPC RecordKey by querying its origin record.
-    Follows VTCK direct lookup and TPLT template inheritance chains.
-    Includes cycle detection and max depth protection.
+    Resolves the Actor Name and VoiceType EDID for a given speaker RecordKey.
+    Traverses template inheritance (TPLT) if VTCK is not directly defined on the NPC.
+    Protected against cycles with a visited set and a maximum traversal depth of 10.
+
+    Returns (actor_name, voice_type_edid).
     """
-    curr_key: Optional[RecordKey] = initial_npc_key
-    visited: set[RecordKey] = set()
+    visited_templates: set[RecordKey] = set()
+    curr_key: Optional[RecordKey] = speaker_key
+    depth = 0
+    max_depth = 10
     primary_actor_name: Optional[str] = None
 
-    while curr_key is not None and len(visited) < max_depth:
-        if curr_key in visited:
-            logger.warning("Cycle detected in NPC TPLT template hierarchy for %s", curr_key)
-            break
-        visited.add(curr_key)
+    while curr_key is not None and depth < max_depth:
+        if curr_key in visited_templates:
+            logger.warning("Cyclic TPLT template reference detected for NPC %s", curr_key)
+            return primary_actor_name, None
+
+        visited_templates.add(curr_key)
+        depth += 1
 
         vtck_raw, tplt_raw, actor_name, owning_plugin, owning_masters = _find_npc_data(
             curr_key,
@@ -393,39 +422,46 @@ def _resolve_voice_type_for_npc(
             origin_dir,
         )
 
+        # Store primary actor name from first NPC in chain if not yet set
         if primary_actor_name is None and actor_name:
             primary_actor_name = actor_name
 
         # Case 1: NPC has direct VTCK
         if vtck_raw is not None:
-            vtck_key = _resolve_record_key(vtck_raw, owning_plugin, owning_masters)
+            vtck_key = _resolve_record_key(
+                vtck_raw, owning_plugin, owning_masters,
+                warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+            )
             if vtck_key is not None:
-                # Resolve VTYP in its origin plugin
+                # Check if target plugin has an override/definition for this VTYP first
+                if vtck_key in local_vtyp_edid:
+                    return primary_actor_name, local_vtyp_edid[vtck_key]
                 if vtck_key.plugin == _norm_plugin(local_plugin_name):
                     return primary_actor_name, local_vtyp_edid.get(vtck_key)
 
                 origin_vtyp_data = master_resolver.get_or_load_master(vtck_key.plugin, origin_dir)
                 if origin_vtyp_data:
-                    return primary_actor_name, origin_vtyp_data.vtyp_to_edid.get(vtck_key)
-
-                logger.warning(
-                    "Could not resolve VoiceType EDID for %s: origin master '%s' not available",
-                    vtck_key, vtck_key.plugin
-                )
+                    resolved_vtyp = origin_vtyp_data.vtyp_to_edid.get(vtck_key)
+                    if resolved_vtyp is None:
+                        logger.warning("VoiceType %s not found in master '%s'", vtck_key, vtck_key.plugin)
+                    return primary_actor_name, resolved_vtyp
             else:
                 logger.warning("Invalid VTCK FormID 0x%08X on NPC %s", vtck_raw, curr_key)
             return primary_actor_name, None
 
-        # Case 2: NPC inherits via TPLT (Template NPC)
+        # Case 2: No direct VTCK, check TPLT inheritance
         if tplt_raw is not None:
-            curr_key = _resolve_record_key(tplt_raw, owning_plugin, owning_masters)
-            if curr_key is None:
-                logger.warning("Invalid TPLT FormID 0x%08X on NPC", tplt_raw)
-                break
+            curr_key = _resolve_record_key(
+                tplt_raw, owning_plugin, owning_masters,
+                warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+            )
             continue
 
-        # Neither VTCK nor TPLT present
+        # Case 3: Neither VTCK nor TPLT present
         break
+
+    if depth >= max_depth:
+        logger.warning("Exceeded maximum TPLT template recursion depth (%d) for NPC %s", max_depth, speaker_key)
 
     return primary_actor_name, None
 
@@ -469,6 +505,8 @@ def parse_esp_file(
 
     plugin_name = path.name
     master_resolver = MasterResolver(search_paths=master_search_paths)
+    warned_esl: set[int] = set()
+    warned_invalid_index: set[tuple[int, int]] = set()
 
     # Pass 1: Build local indexes for VoiceTypes, NPC records, and EditorIDs
     local_npc_to_vtck: dict[RecordKey, int] = {}
@@ -477,7 +515,10 @@ def parse_esp_file(
     local_vtyp_to_edid: dict[RecordKey, str] = {}
 
     for tag, _flags, form_id_val, _form_id_hex, body in _iter_records(data):
-        rec_key = _resolve_record_key(form_id_val, plugin_name, local_masters)
+        rec_key = _resolve_record_key(
+            form_id_val, plugin_name, local_masters,
+            warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+        )
         if rec_key is None:
             continue
 
@@ -510,6 +551,16 @@ def parse_esp_file(
             if tplt_formid is not None:
                 local_npc_to_tplt[rec_key] = tplt_formid
 
+    # If the target plugin is localized, external .STRINGS tables are required.
+    # Ingesting raw 4-byte StringIDs as inline text would corrupt translation data.
+    if is_localized:
+        logger.warning(
+            "Plugin '%s' has FLAG_LOCALIZED enabled. External .STRINGS parsing is not supported yet; "
+            "skipping localized binary StringIDs to prevent translating invalid text.",
+            path.name
+        )
+        return []
+
     # Pass 2: Extract translatable strings and resolve dialogue voice types
     entries: List[StringEntry] = []
     seen_keys = set()
@@ -530,7 +581,10 @@ def parse_esp_file(
         voice_type: Optional[str] = None
 
         if speaker_formid is not None:
-            speaker_key = _resolve_record_key(speaker_formid, plugin_name, local_masters)
+            speaker_key = _resolve_record_key(
+                speaker_formid, plugin_name, local_masters,
+                warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+            )
             if speaker_key is not None:
                 resolved_actor, resolved_voice = _resolve_voice_type_for_npc(
                     speaker_key,
@@ -542,6 +596,8 @@ def parse_esp_file(
                     local_vtyp_to_edid,
                     master_resolver,
                     path.parent,
+                    warned_esl=warned_esl,
+                    warned_invalid_index=warned_invalid_index,
                 )
                 actor_name = resolved_actor or f"Actor_{speaker_formid:08X}"
                 voice_type = resolved_voice
@@ -549,7 +605,10 @@ def parse_esp_file(
                 actor_name = f"Actor_{speaker_formid:08X}"
 
         if tag == b"NPC_" and not actor_name:
-            rec_key = _resolve_record_key(form_id_val, plugin_name, local_masters)
+            rec_key = _resolve_record_key(
+                form_id_val, plugin_name, local_masters,
+                warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+            )
             if rec_key and rec_key in local_npc_to_name:
                 actor_name = local_npc_to_name[rec_key]
             else:

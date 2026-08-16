@@ -143,16 +143,19 @@ def parse_esp_file(
 ### Supported
 - `TES4.MAST` header parsing and relative index resolution.
 - Canonical `RecordKey(plugin, object_id)` across plugins.
+- Target-plugin overrides precedence: records defined/overridden in the parsed plugin take precedence over master copies.
 - Origin-record resolution across master files.
 - Transitive master references (`Mod -> Update.esm -> Skyrim.esm`).
 - `TPLT` template actor inheritance traversal.
 - Cycle and pathological depth protection (`visited` set + `max_depth = 10`).
-- Two-tier in-memory read-only master caching (filesystem discovery cache + index data cache).
-- `FLAG_LOCALIZED` detection to guard against interpreting binary StringIDs as actor names.
+- Two-tier in-memory read-only master caching (filesystem discovery cache + index data cache with negative cache for unreadable/corrupt files).
+- `FLAG_LOCALIZED` detection to guard against interpreting binary StringIDs as actor names or translatable text.
+- Warning deduplication for ESL (`0xFE`) and invalid master indexes.
+- Explicit `skyrim_data_path` parameter to locate base Skyrim masters (`Skyrim.esm`, `Update.esm`, etc.).
 
 ### Not Supported (Deferred)
 - Effective MO2 / plugin load order.
-- WinningOverride across arbitrary load order.
+- Global WinningOverride across arbitrary external plugins.
 - ESL / Light plugin (`0xFE...`) FormID resolution.
 - Complete Bethesda template inheritance flags (`ACBS`/`DNAM` bitmasks).
 - Localized plugin strings parsing (`.STRINGS` / `.DLSTRINGS` / `.ILSTRINGS`).
@@ -176,5 +179,10 @@ def parse_esp_file(
 12. **Test 12 (Local TPLT Inheritance):** Verifies `NPC_ (Instance)` $\to$ `TPLT` $\to$ `NPC_ (Template)` $\to$ `VTCK` $\to$ `VTYP`.
 13. **Test 13 (Master TPLT Inheritance):** Verifies `NPC_` in mod $\to$ `TPLT` in `MasterA.esm` $\to$ `VTCK` in `Skyrim.esm`.
 14. **Test 14 (TPLT Cycle Protection):** Verifies cyclic template references (`NPC A <-> NPC B`) terminate safely with `voice_type is None`.
-15. **Test 15 (Localized StringID Guard):** Verifies that localized plugins (`FLAG_LOCALIZED = 0x80`) ignore 4-byte StringIDs in `FULL` and safely resolve via `EDID` or `Actor_<FormID>`.
+15. **Test 15 (Localized Master StringID Guard):** Verifies that localized master plugins (`FLAG_LOCALIZED = 0x80`) ignore 4-byte StringIDs in `FULL` and safely resolve via `EDID` or `Actor_<FormID>`.
 16. **Test 16 (Missing Master Warning Suppression & Negative Cache):** Verifies that referencing an absent master across 500 records triggers exactly 1 discovery scan, emits exactly 1 warning, and safely resolves with `voice_type is None`.
+17. **Test 17 (Target-Plugin Master Override):** Verifies that when the target plugin being parsed overrides an NPC defined in a master, the local override is queried first and takes precedence over the master copy.
+18. **Test 18 (Corrupt/Invalid Master Negative Cache):** Verifies that a corrupt master file on disk is read/validated exactly once across 500 references.
+19. **Test 19 (Warning Deduplication for ESL & Invalid Master Index):** Verifies that hundreds of identical ESL or out-of-bounds FormIDs emit exactly 1 warning each.
+20. **Test 20 (Localized Target Safety):** Verifies that a target plugin with `FLAG_LOCALIZED` skips binary StringIDs from entering translatable text and warns about unsupported localization.
+21. **Test 21 (Skyrim Data Path in Isolated Job Directory):** Verifies that an isolated job directory resolves `Skyrim.esm` when `master_search_paths` includes Skyrim's Data path.
