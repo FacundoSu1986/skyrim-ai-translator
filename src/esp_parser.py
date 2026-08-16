@@ -688,10 +688,20 @@ def parse_esp_file(
                 s_type == b"DNAM" and tag in DNAM_TEXT_RECORDS
             )
             if not is_text_subrecord or not payload:
+                # A skipped NAM1/NNAM still consumes its pending index so the
+                # next indexed string cannot inherit a stale TRDT/QOBJ value.
+                if tag == b"INFO" and s_type == b"NAM1":
+                    current_info_response_index = None
+                elif tag == b"QUST" and s_type == b"NNAM":
+                    current_quest_objective_index = None
                 continue
 
             text_val = _decode_string(payload).strip()
             if not text_val:
+                if tag == b"INFO" and s_type == b"NAM1":
+                    current_info_response_index = None
+                elif tag == b"QUST" and s_type == b"NNAM":
+                    current_quest_objective_index = None
                 continue
 
             is_dialog = (tag == b"INFO" and s_type == b"NAM1")

@@ -340,6 +340,53 @@ def test_parser_quest_nnam_without_qobj_dedupes_warnings(tmp_path, caplog):
     assert len(nnam_warnings) == 1
 
 
+def test_parser_empty_nam1_does_not_leak_trdt_index_to_next_nam1(tmp_path, caplog):
+    esp_path = tmp_path / "LeakyTRDT.esp"
+    info = make_record(
+        b"INFO",
+        0x00000A01,
+        make_subrecord(b"TRDT", make_trdt(3))
+        + make_subrecord(b"NAM1", b"")
+        + make_subrecord(b"NAM1", b"Real response\x00"),
+    )
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"INFO", info))
+
+    with caplog.at_level(logging.WARNING):
+        responses = [e for e in parse_esp_file(esp_path) if e.is_dialog]
+
+    assert len(responses) == 1
+    assert responses[0].text == "Real response"
+    assert responses[0].string_index is None
+
+    nam1_warnings = [rec.message for rec in caplog.records if "no valid preceding TRDT" in rec.message]
+    assert len(nam1_warnings) == 1
+
+
+def test_parser_whitespace_nnam_does_not_leak_qobj_index_to_next_nnam(tmp_path, caplog):
+    esp_path = tmp_path / "LeakyQOBJ.esp"
+    quest = make_record(
+        b"QUST",
+        0x00000A02,
+        make_subrecord(b"QOBJ", struct.pack("<H", 7))
+        + make_subrecord(b"NNAM", b"   ")
+        + make_subrecord(b"NNAM", b"Real objective\x00"),
+    )
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", quest))
+
+    with caplog.at_level(logging.WARNING):
+        objectives = [
+            e for e in parse_esp_file(esp_path)
+            if e.record_type == "QUST" and e.subrecord_type == "NNAM"
+        ]
+
+    assert len(objectives) == 1
+    assert objectives[0].text == "Real objective"
+    assert objectives[0].string_index is None
+
+    nnam_warnings = [rec.message for rec in caplog.records if "no valid preceding QOBJ" in rec.message]
+    assert len(nnam_warnings) == 1
+
+
 def test_parser_dedupes_accidentally_repeated_same_identity_subrecords(tmp_path):
     esp_path = tmp_path / "DupBook.esp"
     book = make_record(
