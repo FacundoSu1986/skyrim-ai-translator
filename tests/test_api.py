@@ -244,10 +244,12 @@ def test_websocket_empty_plugin_no_mock_fallback(tmp_path):
             except Exception:
                 break
 
-    # Must fail fast with NO_TRANSLATABLE_CONTENT
-    assert jobs[job_id]["status"] == "failed"
-    error_msgs = [m.get("error", "") for m in messages if m.get("error")]
-    assert any("NO_TRANSLATABLE_CONTENT" in err for err in error_msgs)
+    # Must fail fast with status="error" and error_code="NO_TRANSLATABLE_CONTENT"
+    assert jobs[job_id]["status"] == "error"
+    error_events = [m for m in messages if m.get("status") == "error"]
+    assert len(error_events) > 0
+    assert error_events[-1].get("error_code") == "NO_TRANSLATABLE_CONTENT"
+    assert isinstance(error_events[-1].get("error"), str)
 
     # Must NOT contain fake mock text or voice
     log_texts = " ".join(m.get("log", "") for m in messages)
@@ -287,10 +289,12 @@ def test_websocket_unresolved_voice_fail_fast(tmp_path):
             except Exception:
                 break
 
-    # Must fail fast with UNRESOLVED_VOICE_TYPES
-    assert jobs[job_id]["status"] == "failed"
-    error_msgs = [m.get("error", "") for m in messages if m.get("error")]
-    assert any("UNRESOLVED_VOICE_TYPES" in err for err in error_msgs)
+    # Must fail fast with status="error" and error_code="UNRESOLVED_VOICE_TYPES"
+    assert jobs[job_id]["status"] == "error"
+    error_events = [m for m in messages if m.get("status") == "error"]
+    assert len(error_events) > 0
+    assert error_events[-1].get("error_code") == "UNRESOLVED_VOICE_TYPES"
+    assert isinstance(error_events[-1].get("error"), str)
 
     # Must NOT generate any audio files in Sound/Voice
     build_dir = Path(jobs[job_id]["output_dir"])

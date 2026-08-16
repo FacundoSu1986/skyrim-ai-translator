@@ -388,13 +388,19 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             entries = parse_strings_file(file_p)
 
         if not entries:
-            error_msg = f"NO_TRANSLATABLE_CONTENT: No se encontraron textos o diálogos traducibles en '{file_p.name}'."
-            job["status"] = "failed"
-            job["error"] = error_msg
-            await log_msg(f"❌ {error_msg}", 100, "error")
+            error_code = "NO_TRANSLATABLE_CONTENT"
+            human_msg = f"No se encontraron textos o diálogos traducibles en '{file_p.name}'."
+            job["status"] = "error"
+            job["error"] = human_msg
+            job["error_code"] = error_code
+            job["logs"].append({"text": f"❌ [{error_code}] {human_msg}", "level": "error"})
             await websocket.send_json({
                 "status": "error",
-                "error": error_msg,
+                "error_code": error_code,
+                "error": human_msg,
+                "log": f"❌ [{error_code}] {human_msg}",
+                "level": "error",
+                "progress": 100,
                 "job_id": job_id
             })
             return
@@ -432,17 +438,23 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 sample_ids = ", ".join(f"0x{e.form_id}" for e in unresolved[:5])
                 if unresolved_count > 5:
                     sample_ids += f", ... (+{unresolved_count - 5} más)"
-                error_msg = (
-                    f"UNRESOLVED_VOICE_TYPES: {unresolved_count}/{total_dialogs} diálogos carecen de VoiceType resuelto "
+                error_code = "UNRESOLVED_VOICE_TYPES"
+                human_msg = (
+                    f"{unresolved_count}/{total_dialogs} diálogos carecen de VoiceType resuelto "
                     f"(FormIDs: {sample_ids}). Proporcione 'skyrim_data_path' con los masters necesarios o desactive "
                     f"la generación de voces."
                 )
-                job["status"] = "failed"
-                job["error"] = error_msg
-                await log_msg(f"❌ {error_msg}", 100, "error")
+                job["status"] = "error"
+                job["error"] = human_msg
+                job["error_code"] = error_code
+                job["logs"].append({"text": f"❌ [{error_code}] {human_msg}", "level": "error"})
                 await websocket.send_json({
                     "status": "error",
-                    "error": error_msg,
+                    "error_code": error_code,
+                    "error": human_msg,
+                    "log": f"❌ [{error_code}] {human_msg}",
+                    "level": "error",
+                    "progress": 100,
                     "job_id": job_id
                 })
                 return
@@ -520,8 +532,16 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
 
     except Exception as e:
         job["status"] = "error"
+        job["error"] = str(e)
         logger.exception("Error crítico en pipeline de traducción para %s: %s", job_id, e)
-        await log_msg(f"❌ ERROR CRÍTICO: {str(e)}", 100, "error")
+        await websocket.send_json({
+            "status": "error",
+            "error": str(e),
+            "log": f"❌ ERROR CRÍTICO: {str(e)}",
+            "level": "error",
+            "progress": 100,
+            "job_id": job_id
+        })
 
     await websocket.close()
 
