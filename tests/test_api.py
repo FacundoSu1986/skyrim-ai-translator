@@ -471,9 +471,10 @@ def test_websocket_esp_dsd_official_output_path_and_content(tmp_path):
         item for item in content
         if item["form_id"] == "0x000333|TargetMod.esp" and item["type"] == "INFO NAM1"
     ]
-    # Cardinality freeze still active at this commit: only the first indexed
-    # response is emitted. The indexed 1->N activation extends this to {0, 4}.
-    assert {item["index"] for item in info_items} == {0}
+    # Indexed 1->N: both responses of the same INFO survive the whole
+    # pipeline with their own index.
+    assert {item["index"] for item in info_items} == {0, 4}
+    assert len(info_items) == 2
 
 
 def test_websocket_preflight_unsupported_type_fails_before_translation(tmp_path, monkeypatch):

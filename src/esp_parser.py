@@ -593,11 +593,12 @@ def parse_esp_file(
 
     # Pass 2: Extract translatable strings and resolve dialogue voice types
     entries: List[StringEntry] = []
-    # Temporary cardinality freeze: dedup by (form_id, subrecord) keeps the
-    # pre-PR emission shape (at most one entry per form_id/subrecord) until
-    # the form_id-keyed consumers (dsd_exporter, tts_generator) are updated.
-    # string_index-aware multi-response emission is deferred to PR #6.
-    seen_keys: set[tuple[str, bytes]] = set()
+    # Indexed 1->N identity: (form_id, subrecord, string_index). Multi-response
+    # INFO.NAM1 / QUST.NNAM records emit one entry per resolved index. For
+    # string_index=None no index is ever invented, so unresolved-index
+    # duplicates of the same (form_id, subrecord) collapse to the first
+    # occurrence; the DSD layer fails fast on any unresolved indexed entry.
+    seen_keys: set[tuple[str, bytes, Optional[int]]] = set()
 
     for tag, flags, form_id_val, form_id_hex, body in _iter_records(data):
         if tag not in INTERESTING_RECORDS:
@@ -729,7 +730,7 @@ def parse_esp_file(
                         )
                 current_quest_objective_index = None
 
-            unique_key = (form_id_hex, s_type)
+            unique_key = (form_id_hex, s_type, string_index)
             if unique_key in seen_keys:
                 continue
             seen_keys.add(unique_key)
