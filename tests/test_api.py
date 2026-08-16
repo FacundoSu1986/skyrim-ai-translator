@@ -393,3 +393,71 @@ def test_upload_esp_skyrim_data_path_flow(tmp_path):
 
     assert jobs[job_id]["status"] == "completed"
 
+
+def test_upload_esp_preserves_target_plugin_filename(tmp_path):
+    """ESP/ESM/ESL uploads capture the real plugin filename with its extension."""
+    esp = tmp_path / "MyMaster.esm"
+    esp.write_bytes(b"TES4 dummy")
+
+    with open(esp, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("MyMaster.esm", f, "application/octet-stream")}
+        )
+    assert res.status_code == 200
+    job = jobs[res.json()["job_id"]]
+    assert job["target_plugin_filename"] == "MyMaster.esm"
+    # plugin_name keeps its existing extension-less semantics
+    assert job["plugin_name"] == "MyMaster"
+
+
+def test_upload_json_has_no_target_plugin_filename(tmp_path):
+    """Legacy JSON uploads never fabricate a target plugin filename."""
+    test_json = tmp_path / "ModA.json"
+    test_json.write_text('[{"FormID": "0001", "Text": "Hi"}]', encoding="utf-8")
+
+    with open(test_json, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("ModA.json", f, "application/json")}
+        )
+    assert res.status_code == 200
+    job = jobs[res.json()["job_id"]]
+    assert job["target_plugin_filename"] is None
+    assert job["plugin_name"] == "ModA"
+
+
+def test_mo2_start_esp_capture_target_plugin_filename(tmp_path):
+    """MO2 jobs with a native plugin capture the plugin's real filename."""
+    mo2_dir = tmp_path / "mods"
+    mod_folder = mo2_dir / "CoolCompanion"
+    mod_folder.mkdir(parents=True)
+    (mod_folder / "CoolCompanion.esp").write_bytes(b"TES4 dummy")
+
+    res = client.post("/api/mo2/start", json={
+        "mo2_path": str(mo2_dir),
+        "mod_name": "CoolCompanion"
+    })
+    assert res.status_code == 200
+    job = jobs[res.json()["job_id"]]
+    assert job["target_plugin_filename"] == "CoolCompanion.esp"
+    assert job["plugin_name"] == "CoolCompanion"
+
+
+def test_mo2_start_json_has_no_target_plugin_filename(tmp_path):
+    """MO2 jobs falling back to legacy JSON never fabricate a target plugin filename."""
+    mo2_dir = tmp_path / "mods"
+    mod_folder = mo2_dir / "TextMod"
+    mod_folder.mkdir(parents=True)
+    (mod_folder / "strings.json").write_text(
+        '[{"FormID": "0001", "Text": "Hi"}]', encoding="utf-8"
+    )
+
+    res = client.post("/api/mo2/start", json={
+        "mo2_path": str(mo2_dir),
+        "mod_name": "TextMod"
+    })
+    assert res.status_code == 200
+    job = jobs[res.json()["job_id"]]
+    assert job["target_plugin_filename"] is None
+

@@ -248,10 +248,17 @@ async def upload_json(
         if plugin_name.lower().endswith(ext):
             plugin_name = plugin_name[:-len(ext)]
 
+    # Real plugin filename (with extension) for DSD output paths; never fabricated
+    # for legacy JSON uploads.
+    target_plugin_filename = None
+    if Path(safe_name).suffix.lower() in [".esp", ".esm", ".esl"]:
+        target_plugin_filename = safe_name
+
     jobs[job_id] = {
         "status": "pending",
         "file_path": str(file_path),
         "plugin_name": plugin_name,
+        "target_plugin_filename": target_plugin_filename,
         "config": cfg,
         "api_key": transient_api_key,
         "progress": 0,
@@ -287,10 +294,12 @@ async def start_mo2_translation(req: MO2TranslateRequest):
     json_files = sorted(set(candidate_jsons))
 
     plugin_file_name = mod_name
+    target_plugin_filename = None
     if esp_files:
         # Native ESP plugin found: prioritize binary parsing for authentic game data
         target_file = esp_files[0]
         plugin_file_name = target_file.stem
+        target_plugin_filename = target_file.name
         file_path = upload_dir / target_file.name
         shutil.copy(target_file, file_path)
     elif json_files:
@@ -314,6 +323,7 @@ async def start_mo2_translation(req: MO2TranslateRequest):
         "status": "pending",
         "file_path": str(file_path),
         "plugin_name": plugin_file_name,
+        "target_plugin_filename": target_plugin_filename,
         "config": cfg,
         # Transient: consumed and removed by the websocket handler
         "api_key": req.api_key,
