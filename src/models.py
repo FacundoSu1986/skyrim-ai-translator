@@ -9,4 +9,10 @@ class StringEntry:
     actor: Optional[str] = None
     translated_text: Optional[str] = None
     voice_type: Optional[str] = None
+    defining_plugin: Optional[str] = None
+    local_object_id: Optional[int] = None
+    record_type: Optional[str] = None
+    subrecord_type: Optional[str] = None
+    string_index: Optional[int] = None
+    editor_id: Optional[str] = None
 
