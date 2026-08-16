@@ -227,7 +227,7 @@ async def test_translation_preserves_dsd_metadata():
         editor_id="SomeInfo",
     )
 
-    async def translate(text, context):
+    async def translate(_text: str, _context: str) -> str:
         return "Hola"
 
     translated = (
@@ -244,13 +244,15 @@ async def test_translation_preserves_dsd_metadata():
     assert translated.editor_id == entry.editor_id
 
 
-def test_parser_trdt_too_short_does_not_crash_and_index_is_none(tmp_path, caplog):
+def test_parser_trdt_too_short_does_not_crash_and_dedupes_warnings(tmp_path, caplog):
     esp_path = tmp_path / "BrokenTRDT.esp"
     info = make_record(
         b"INFO",
         0x00000555,
         make_subrecord(b"TRDT", struct.pack("<I", 0))
-        + make_subrecord(b"NAM1", b"Broken response\x00"),
+        + make_subrecord(b"NAM1", b"Broken response\x00")
+        + make_subrecord(b"TRDT", struct.pack("<I", 0))
+        + make_subrecord(b"NAM1", b"Broken repeat\x00"),
     )
     esp_path.write_bytes(make_tes4_header() + make_grup(b"INFO", info))
 
@@ -263,13 +265,17 @@ def test_parser_trdt_too_short_does_not_crash_and_index_is_none(tmp_path, caplog
     malformed_trdt = [rec.message for rec in caplog.records if "malformed TRDT" in rec.message]
     assert len(malformed_trdt) == 1
 
+    missing_trdt = [rec.message for rec in caplog.records if "no valid preceding TRDT" in rec.message]
+    assert len(missing_trdt) == 1
 
-def test_parser_info_nam1_without_trdt_gets_none_index(tmp_path, caplog):
+
+def test_parser_info_nam1_without_trdt_dedupes_warnings(tmp_path, caplog):
     esp_path = tmp_path / "NoTRDT.esp"
     info = make_record(
         b"INFO",
         0x00000666,
-        make_subrecord(b"NAM1", b"Loose response\x00"),
+        make_subrecord(b"NAM1", b"Loose response\x00")
+        + make_subrecord(b"NAM1", b"Loose repeat\x00"),
     )
     esp_path.write_bytes(make_tes4_header() + make_grup(b"INFO", info))
 
@@ -283,12 +289,41 @@ def test_parser_info_nam1_without_trdt_gets_none_index(tmp_path, caplog):
     assert len(nam1_warnings) == 1
 
 
-def test_parser_quest_nnam_without_qobj_gets_none_index(tmp_path, caplog):
+def test_parser_qobj_too_short_does_not_crash_and_dedupes_warnings(tmp_path, caplog):
+    esp_path = tmp_path / "BrokenQOBJ.esp"
+    quest = make_record(
+        b"QUST",
+        0x00000788,
+        make_subrecord(b"QOBJ", struct.pack("<B", 0))
+        + make_subrecord(b"NNAM", b"Broken objective\x00")
+        + make_subrecord(b"QOBJ", struct.pack("<B", 0))
+        + make_subrecord(b"NNAM", b"Broken repeat\x00"),
+    )
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", quest))
+
+    with caplog.at_level(logging.WARNING):
+        objectives = [
+            e for e in parse_esp_file(esp_path)
+            if e.record_type == "QUST" and e.subrecord_type == "NNAM"
+        ]
+
+    assert len(objectives) == 1
+    assert objectives[0].string_index is None
+
+    malformed_qobj = [rec.message for rec in caplog.records if "malformed QOBJ" in rec.message]
+    assert len(malformed_qobj) == 1
+
+    missing_qobj = [rec.message for rec in caplog.records if "no valid preceding QOBJ" in rec.message]
+    assert len(missing_qobj) == 1
+
+
+def test_parser_quest_nnam_without_qobj_dedupes_warnings(tmp_path, caplog):
     esp_path = tmp_path / "NoQOBJ.esp"
     quest = make_record(
         b"QUST",
         0x00000777,
-        make_subrecord(b"NNAM", b"Objective without QOBJ\x00"),
+        make_subrecord(b"NNAM", b"Objective without QOBJ\x00")
+        + make_subrecord(b"NNAM", b"Repeat without QOBJ\x00"),
     )
     esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", quest))
 
