@@ -536,6 +536,7 @@ def parse_esp_file(
     master_resolver = MasterResolver(search_paths=master_search_paths)
     warned_esl: set[int] = set()
     warned_invalid_index: set[tuple[int, int]] = set()
+    warned_string_index: set[tuple[str, str]] = set()
 
     # Pass 1: Build local indexes for VoiceTypes, NPC records, and EditorIDs
     local_npc_to_vtck: dict[RecordKey, int] = {}
@@ -592,10 +593,11 @@ def parse_esp_file(
 
     # Pass 2: Extract translatable strings and resolve dialogue voice types
     entries: List[StringEntry] = []
-    # DSD identity (form_id, subrecord, string_index): preserves every INFO
-    # response / quest objective while deduplicating accidentally repeated
-    # subrecords that share the same identity (string_index may be None).
-    seen_identities: set[tuple[str, bytes, Optional[int]]] = set()
+    # Temporary cardinality freeze: dedup by (form_id, subrecord) keeps the
+    # pre-PR emission shape (at most one entry per form_id/subrecord) until
+    # the form_id-keyed consumers (dsd_exporter, tts_generator) are updated.
+    # string_index-aware multi-response emission is deferred to PR #6.
+    seen_keys: set[tuple[str, bytes]] = set()
 
     for tag, flags, form_id_val, form_id_hex, body in _iter_records(data):
         if tag not in INTERESTING_RECORDS:
@@ -649,12 +651,8 @@ def parse_esp_file(
                 actor_name = f"Actor_{speaker_formid:08X}"
 
         if tag == b"NPC_" and not actor_name:
-            rec_key = _resolve_record_key(
-                form_id_val, plugin_name, local_masters,
-                warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
-            )
-            if rec_key and rec_key in local_npc_to_name:
-                actor_name = local_npc_to_name[rec_key]
+            if record_key is not None and record_key in local_npc_to_name:
+                actor_name = local_npc_to_name[record_key]
             else:
                 actor_name = f"Actor_{form_id_hex}"
 
@@ -665,19 +663,25 @@ def parse_esp_file(
             if tag == b"INFO" and s_type == b"TRDT":
                 current_info_response_index = _parse_info_response_number(payload)
                 if current_info_response_index is None:
-                    logger.warning(
-                        "INFO %s has malformed TRDT (%d bytes); NAM1 index will remain unresolved",
-                        form_id_hex, len(payload)
-                    )
+                    gap = ("malformed_trdt", form_id_hex)
+                    if gap not in warned_string_index:
+                        warned_string_index.add(gap)
+                        logger.warning(
+                            "INFO %s has malformed TRDT (%d bytes); NAM1 index will remain unresolved",
+                            form_id_hex, len(payload)
+                        )
                 continue
 
             if tag == b"QUST" and s_type == b"QOBJ":
                 current_quest_objective_index = _parse_quest_objective_index(payload)
                 if current_quest_objective_index is None:
-                    logger.warning(
-                        "QUST %s has malformed QOBJ (%d bytes); NNAM index will remain unresolved",
-                        form_id_hex, len(payload)
-                    )
+                    gap = ("malformed_qobj", form_id_hex)
+                    if gap not in warned_string_index:
+                        warned_string_index.add(gap)
+                        logger.warning(
+                            "QUST %s has malformed QOBJ (%d bytes); NNAM index will remain unresolved",
+                            form_id_hex, len(payload)
+                        )
                 continue
 
             is_text_subrecord = s_type in INTERESTING_SUBRECORDS or (
@@ -695,24 +699,30 @@ def parse_esp_file(
             if is_dialog:
                 string_index = current_info_response_index
                 if string_index is None:
-                    logger.warning(
-                        "INFO %s NAM1 has no valid preceding TRDT response number",
-                        form_id_hex
-                    )
+                    gap = ("nam1_missing_trdt", form_id_hex)
+                    if gap not in warned_string_index:
+                        warned_string_index.add(gap)
+                        logger.warning(
+                            "INFO %s NAM1 has no valid preceding TRDT response number",
+                            form_id_hex
+                        )
                 current_info_response_index = None
             elif tag == b"QUST" and s_type == b"NNAM":
                 string_index = current_quest_objective_index
                 if string_index is None:
-                    logger.warning(
-                        "QUST %s NNAM has no valid preceding QOBJ objective index",
-                        form_id_hex
-                    )
+                    gap = ("nnam_missing_qobj", form_id_hex)
+                    if gap not in warned_string_index:
+                        warned_string_index.add(gap)
+                        logger.warning(
+                            "QUST %s NNAM has no valid preceding QOBJ objective index",
+                            form_id_hex
+                        )
                 current_quest_objective_index = None
 
-            entry_identity = (form_id_hex, s_type, string_index)
-            if entry_identity in seen_identities:
+            unique_key = (form_id_hex, s_type)
+            if unique_key in seen_keys:
                 continue
-            seen_identities.add(entry_identity)
+            seen_keys.add(unique_key)
 
             entries.append(
                 StringEntry(
