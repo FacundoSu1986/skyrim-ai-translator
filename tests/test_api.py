@@ -333,16 +333,19 @@ def test_websocket_unresolved_voice_allowed_when_voice_disabled(tmp_path):
                 break
 
     assert jobs[job_id]["status"] == "completed"
-    # DSD file was created
+    # Legacy JSON input carries no DSD metadata: the export must be skipped
+    # explicitly (warning logged), not fabricated as a success artifact.
     build_dir = Path(jobs[job_id]["output_dir"])
-    dsd_file = build_dir / "SKSE" / "Plugins" / "DSD" / "TextOnlyMod.json"
-    assert dsd_file.exists()
+    assert not (build_dir / "SKSE").exists()
+    log_texts = " ".join(m.get("log", "") for m in messages)
+    assert "Export DSD omitido" in log_texts
 
 
 def test_upload_esp_skyrim_data_path_flow(tmp_path):
     """Verify that skyrim_data_path flows from /api/upload config to parse_esp_file master_search_paths."""
     import struct
     from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
+    from tests.test_dsd_metadata import make_trdt
 
     # 1. Master in Skyrim Data path
     skyrim_data = tmp_path / "SkyrimData"
@@ -363,6 +366,7 @@ def test_upload_esp_skyrim_data_path_flow(tmp_path):
         b"INFO",
         0x01000001,
         make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
+        make_subrecord(b"TRDT", make_trdt(0)) +
         make_subrecord(b"NAM1", b"Greetings dragonborn.\x00")
     )
     mod_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", info_rec))
@@ -392,6 +396,151 @@ def test_upload_esp_skyrim_data_path_flow(tmp_path):
                 break
 
     assert jobs[job_id]["status"] == "completed"
+
+
+def _run_websocket_job(job_id: str) -> list[dict]:
+    messages = []
+    with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+        while True:
+            try:
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg.get("status") in ["completed", "error"]:
+                    break
+            except Exception:
+                break
+    return messages
+
+
+def test_websocket_esp_dsd_official_output_path_and_content(tmp_path):
+    """Golden path L: ESP jobs write the official DSD layout with 1->N content."""
+    import struct
+    from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
+    from tests.test_dsd_metadata import make_trdt
+
+    # TargetMod.esp: target-new BOOK, Skyrim.esm override BOOK, and one INFO
+    # carrying two indexed responses (NAM1 index 0 and 4).
+    mod_esp = tmp_path / "TargetMod.esp"
+    new_book = make_record(
+        b"BOOK", 0x01000123,
+        make_subrecord(b"EDID", b"MyBook\x00") + make_subrecord(b"FULL", b"Ancient Book\x00")
+    )
+    override_book = make_record(
+        b"BOOK", 0x0001A697,
+        make_subrecord(b"EDID", b"OvrBook\x00") + make_subrecord(b"FULL", b"Overridden Book\x00")
+    )
+    multi_info = make_record(
+        b"INFO", 0x01000333,
+        make_subrecord(b"TRDT", make_trdt(0)) + make_subrecord(b"NAM1", b"First response\x00") +
+        make_subrecord(b"TRDT", make_trdt(4)) + make_subrecord(b"NAM1", b"Second response\x00")
+    )
+    mod_esp.write_bytes(
+        make_tes4_header(["Skyrim.esm"])
+        + make_grup(b"BOOK", new_book + override_book)
+        + make_grup(b"INFO", multi_info)
+    )
+
+    with open(mod_esp, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("TargetMod.esp", f, "application/octet-stream")},
+            data={"config": json.dumps({"generate_voice": False})}
+        )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+
+    messages = _run_websocket_job(job_id)
+    assert jobs[job_id]["status"] == "completed", jobs[job_id].get("error")
+
+    build_dir = Path(jobs[job_id]["output_dir"])
+    dsd_file = (
+        build_dir / "SKSE" / "Plugins" / "DynamicStringDistributor"
+        / "TargetMod.esp" / "SkyrimAITranslator.json"
+    )
+    assert dsd_file.exists(), f"Expected official DSD path {dsd_file}"
+    assert not (build_dir / "SKSE" / "Plugins" / "DSD").exists()
+
+    content = json.loads(dsd_file.read_text(encoding="utf-8"))
+    assert isinstance(content, list)
+
+    by_form_type = {(item["form_id"], item["type"]): item for item in content}
+    assert by_form_type[("0x000123|TargetMod.esp", "BOOK FULL")]["string"]
+    assert by_form_type[("0x01A697|Skyrim.esm", "BOOK FULL")]["string"]
+
+    info_items = [
+        item for item in content
+        if item["form_id"] == "0x000333|TargetMod.esp" and item["type"] == "INFO NAM1"
+    ]
+    # Cardinality freeze still active at this commit: only the first indexed
+    # response is emitted. The indexed 1->N activation extends this to {0, 4}.
+    assert {item["index"] for item in info_items} == {0}
+
+
+def test_websocket_preflight_unsupported_type_fails_before_translation(tmp_path, monkeypatch):
+    """FACT FULL cannot be represented by DSD 1.4.3: the job must fail fast
+    with DSD_UNSUPPORTED_TYPE before spending any LLM call."""
+    import api as api_module
+    from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
+
+    async def _translator_must_not_run(_text, _context):
+        raise AssertionError("translator must not run when DSD preflight fails")
+
+    monkeypatch.setattr(api_module, "free_translator_callable", _translator_must_not_run)
+
+    mod_esp = tmp_path / "FactionMod.esp"
+    fact_rec = make_record(
+        b"FACT", 0x00000123,
+        make_subrecord(b"EDID", b"MyFaction\x00") + make_subrecord(b"FULL", b"Thieves Guild\x00")
+    )
+    mod_esp.write_bytes(make_tes4_header([]) + make_grup(b"FACT", fact_rec))
+
+    with open(mod_esp, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("FactionMod.esp", f, "application/octet-stream")},
+            data={"config": json.dumps({"generate_voice": False})}
+        )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+
+    messages = _run_websocket_job(job_id)
+
+    assert jobs[job_id]["status"] == "error"
+    assert jobs[job_id]["error_code"] == "DSD_UNSUPPORTED_TYPE"
+    error_events = [m for m in messages if m.get("status") == "error"]
+    assert error_events[-1]["error_code"] == "DSD_UNSUPPORTED_TYPE"
+    assert "FACT FULL" in error_events[-1]["error"]
+
+
+def test_websocket_preflight_missing_index_fails_fast(tmp_path):
+    """INFO NAM1 without a resolvable TRDT index must fail fast with
+    DSD_METADATA_MISSING before translation."""
+    import struct
+    from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
+
+    mod_esp = tmp_path / "BrokenInfo.esp"
+    info_rec = make_record(
+        b"INFO", 0x00000555,
+        make_subrecord(b"ANAM", struct.pack("<I", 0)) +
+        make_subrecord(b"NAM1", b"Response without TRDT\x00")
+    )
+    mod_esp.write_bytes(make_tes4_header([]) + make_grup(b"INFO", info_rec))
+
+    with open(mod_esp, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("BrokenInfo.esp", f, "application/octet-stream")},
+            data={"config": json.dumps({"generate_voice": False})}
+        )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+
+    messages = _run_websocket_job(job_id)
+
+    assert jobs[job_id]["status"] == "error"
+    assert jobs[job_id]["error_code"] == "DSD_METADATA_MISSING"
+    error_events = [m for m in messages if m.get("status") == "error"]
+    assert error_events[-1]["error_code"] == "DSD_METADATA_MISSING"
 
 
 def test_upload_esp_preserves_target_plugin_filename(tmp_path):

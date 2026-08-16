@@ -4,7 +4,7 @@ from pathlib import Path
 from src.parser import parse_strings_file
 from src.translator import translate_entries
 from src.tts_generator import generate_voice_file
-from src.dsd_exporter import export_to_dsd
+from src.dsd_exporter import export_to_dsd, DSDExportError
 
 async def main():
     # Setup test paths
@@ -42,7 +42,12 @@ async def main():
     await asyncio.gather(*tasks)
 
     print("4. Exporting to DSD JSON...")
-    export_to_dsd(translated_entries, str(output_dsd))
+    try:
+        export_to_dsd(translated_entries, str(output_dsd))
+    except DSDExportError as err:
+        # The demo's legacy JSON input carries no DSD metadata; the pipeline
+        # refuses to fabricate it and reports the failure explicitly.
+        print(f"   DSD export refused: [{err.code}] {err}")
 
     print("Pipeline Complete. Check the 'output' directory.")
 
