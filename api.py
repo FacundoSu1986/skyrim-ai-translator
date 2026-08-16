@@ -77,6 +77,19 @@ def _validate_mo2_path(mo2_path: str) -> Path:
     return p
 
 
+def _validate_skyrim_data_path(skyrim_data_path: Optional[str]) -> Optional[Path]:
+    """Validates that skyrim_data_path, if provided, points to a real existing directory."""
+    if not skyrim_data_path or not str(skyrim_data_path).strip():
+        return None
+    p = Path(str(skyrim_data_path).strip())
+    if not p.is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail=f"La ruta de Skyrim Data no existe o no es un directorio válido: '{skyrim_data_path}'"
+        )
+    return p
+
+
 def _copy_build_to_dir(build_dir: Path, target_dir: Path) -> None:
     """Copies every generated artifact from build_dir into target_dir (synchronous)."""
     for item in build_dir.iterdir():
@@ -223,6 +236,10 @@ async def upload_json(
         try:
             cfg = json.loads(config)
             transient_api_key = cfg.pop("api_key", None)
+            if "skyrim_data_path" in cfg and cfg["skyrim_data_path"]:
+                _validate_skyrim_data_path(cfg["skyrim_data_path"])
+        except HTTPException:
+            raise
         except Exception as err:
             logger.warning("JSON de configuración de subida no válido: %s", err)
 
@@ -248,6 +265,8 @@ async def upload_json(
 async def start_mo2_translation(req: MO2TranslateRequest):
     """Starts translation job directly from a mod selected in Mod Organizer 2."""
     mo2_base = _validate_mo2_path(req.mo2_path)
+    if req.skyrim_data_path:
+        _validate_skyrim_data_path(req.skyrim_data_path)
     mod_name = _sanitize_name(req.mod_name)
     mod_dir = mo2_base / mod_name
     if not mod_dir.is_dir():
@@ -369,9 +388,16 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             entries = parse_strings_file(file_p)
 
         if not entries:
-            # Fallback entry if empty
-            from src.models import StringEntry
-            entries = [StringEntry(form_id="0001234A", text=f"Welcome to {job['plugin_name']}.", is_dialog=True, voice_type="MaleNord")]
+            error_msg = f"NO_TRANSLATABLE_CONTENT: No se encontraron textos o diálogos traducibles en '{file_p.name}'."
+            job["status"] = "failed"
+            job["error"] = error_msg
+            await log_msg(f"❌ {error_msg}", 100, "error")
+            await websocket.send_json({
+                "status": "error",
+                "error": error_msg,
+                "job_id": job_id
+            })
+            return
 
         await log_msg(f"✅ {len(entries)} textos y diálogos extraídos con éxito.", 25, "success")
 
@@ -400,12 +426,26 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         total_dialogs = len(dialog_entries)
 
         if generate_voice and dialog_entries:
-            unresolved_voice_count = sum(1 for e in dialog_entries if not e.voice_type)
-            if unresolved_voice_count > 0:
-                await log_msg(
-                    f"⚠️ {unresolved_voice_count}/{total_dialogs} diálogos sin VoiceType identificado (masters no disponibles en Skyrim Data).",
-                    63, "warning"
+            unresolved = [e for e in dialog_entries if not e.voice_type]
+            if unresolved:
+                unresolved_count = len(unresolved)
+                sample_ids = ", ".join(f"0x{e.form_id}" for e in unresolved[:5])
+                if unresolved_count > 5:
+                    sample_ids += f", ... (+{unresolved_count - 5} más)"
+                error_msg = (
+                    f"UNRESOLVED_VOICE_TYPES: {unresolved_count}/{total_dialogs} diálogos carecen de VoiceType resuelto "
+                    f"(FormIDs: {sample_ids}). Proporcione 'skyrim_data_path' con los masters necesarios o desactive "
+                    f"la generación de voces."
                 )
+                job["status"] = "failed"
+                job["error"] = error_msg
+                await log_msg(f"❌ {error_msg}", 100, "error")
+                await websocket.send_json({
+                    "status": "error",
+                    "error": error_msg,
+                    "job_id": job_id
+                })
+                return
 
             await log_msg(f"🎙️ Generando voces neuronales ({total_dialogs} diálogos)...", 65, "audio")
             voice_base_dir = build_dir / "Sound" / "Voice" / f"{job['plugin_name']}.esp"
@@ -438,10 +478,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             await asyncio.gather(*[_gen_voice(entry) for entry in dialog_entries])
 
             if success_voice_count == total_dialogs:
-                if unresolved_voice_count == 0:
-                    await log_msg(f"✅ {success_voice_count}/{total_dialogs} archivos de voz neuronal organizados por VoiceType.", 85, "success")
-                else:
-                    await log_msg(f"⚠️ {success_voice_count}/{total_dialogs} archivos de voz generados ({unresolved_voice_count} sin subcarpeta VoiceType).", 85, "warning")
+                await log_msg(f"✅ {success_voice_count}/{total_dialogs} archivos de voz neuronal organizados por VoiceType.", 85, "success")
             else:
                 await log_msg(f"⚠️ {success_voice_count}/{total_dialogs} archivos de voz generados ({total_dialogs - success_voice_count} fallaron).", 85, "error")
         else:
