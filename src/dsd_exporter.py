@@ -7,6 +7,8 @@ from src.models import StringEntry
 class DSDExportError(RuntimeError):
     """Base error for DSD export contract violations."""
 
+    code = "DSD_EXPORT_ERROR"
+
 
 class DSDMetadataMissingError(DSDExportError):
     code = "DSD_METADATA_MISSING"
