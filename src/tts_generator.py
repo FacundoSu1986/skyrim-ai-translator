@@ -28,7 +28,12 @@ async def generate_voice_file(
         if entry.voice_type:
             out_path = out_path / entry.voice_type
         out_path.mkdir(parents=True, exist_ok=True)
-        file_path = out_path / f"{entry.form_id}.mp3"
+        # Internal staging name only (de-collisions multi-response records):
+        # NOT the final Skyrim/FUZ asset convention. Indexed records carry
+        # their string_index so two responses of the same INFO never target
+        # the same file inside asyncio.gather.
+        index_suffix = f"_{entry.string_index}" if entry.string_index is not None else ""
+        file_path = out_path / f"{entry.form_id}{index_suffix}.mp3"
         
         communicate = tts_class(entry.translated_text, voice)
         await communicate.save(str(file_path))

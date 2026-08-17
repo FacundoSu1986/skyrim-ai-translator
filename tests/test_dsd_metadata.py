@@ -127,15 +127,13 @@ def test_parser_info_nam1_uses_real_trdt_response_number(tmp_path):
     assert responses[0].subrecord_type == "NAM1"
 
 
-def test_parser_multi_response_emission_deferred_until_consumer_update(tmp_path):
-    """Regression guard for the temporary cardinality freeze.
+def test_parser_multi_response_emission_keyed_by_string_index(tmp_path):
+    """Indexed 1->N activation (inverts the PR #5 cardinality freeze guard).
 
-    PR #5 keeps the pre-PR emission shape: at most one entry per
-    (form_id, subrecord), so a multi-response INFO record emits only its
-    first NAM1, carrying that response's real TRDT index. Multi-response
-    emission keyed by string_index is deferred to PR #6, which will update
-    the form_id-keyed consumers (dsd_exporter.py, tts_generator.py)
-    atomically.
+    Identity is (form_id, subrecord, string_index): a multi-response INFO
+    record emits one entry per resolved TRDT response number, and the
+    form_id-keyed consumers (dsd_exporter.py, tts_generator.py) receive
+    both responses.
     """
     esp_path = tmp_path / "MultiResponse.esp"
     info = make_record(
@@ -150,12 +148,13 @@ def test_parser_multi_response_emission_deferred_until_consumer_update(tmp_path)
 
     responses = [e for e in parse_esp_file(esp_path) if e.is_dialog]
 
-    assert len(responses) == 1
-    assert responses[0].text == "First response"
-    assert responses[0].string_index == 0
+    assert [(e.text, e.string_index) for e in responses] == [
+        ("First response", 0),
+        ("Second response", 4),
+    ]
 
 
-def test_parser_single_emitted_response_keeps_actor_and_voice_resolution(tmp_path):
+def test_parser_multi_response_entries_keep_actor_and_voice_resolution(tmp_path):
     esp_path = tmp_path / "LydiaDialog.esp"
     vtyp = make_record(
         b"VTYP",
@@ -182,10 +181,14 @@ def test_parser_single_emitted_response_keeps_actor_and_voice_resolution(tmp_pat
 
     responses = [e for e in parse_esp_file(esp_path) if e.is_dialog]
 
-    assert len(responses) == 1
-    assert responses[0].string_index == 1
-    assert responses[0].actor == "Lydia"
-    assert responses[0].voice_type == "FemaleCommander"
+    assert [(e.string_index, e.text) for e in responses] == [
+        (1, "First line"),
+        (7, "Second line"),
+    ]
+    # Both responses belong to the same INFO record: actor and voice
+    # resolution apply identically to every emitted entry.
+    assert {e.actor for e in responses} == {"Lydia"}
+    assert {e.voice_type for e in responses} == {"FemaleCommander"}
 
 
 def test_parser_quest_nnam_uses_qobj_objective_index(tmp_path):
@@ -207,10 +210,31 @@ def test_parser_quest_nnam_uses_qobj_objective_index(tmp_path):
         if e.record_type == "QUST" and e.subrecord_type == "NNAM"
     ]
 
-    # Cardinality freeze: only the first NNAM is emitted until PR #6.
+    # Indexed 1->N: both objectives are emitted with their QOBJ indices.
     assert [(e.text, e.string_index) for e in objectives] == [
         ("Find the sword", 10),
+        ("Return to the Jarl", 50),
     ]
+
+
+def test_parser_duplicate_explicit_index_collapses_to_first(tmp_path):
+    """Fail-safe identity policy: two NAM1 responses carrying the same
+    explicit TRDT index are an ambiguous identity; the first occurrence
+    wins (same policy as accidental non-indexed duplicates)."""
+    esp_path = tmp_path / "DupIndex.esp"
+    info = make_record(
+        b"INFO",
+        0x00000333,
+        make_subrecord(b"TRDT", make_trdt(4))
+        + make_subrecord(b"NAM1", b"First\x00")
+        + make_subrecord(b"TRDT", make_trdt(4))
+        + make_subrecord(b"NAM1", b"Second\x00"),
+    )
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"INFO", info))
+
+    responses = [e for e in parse_esp_file(esp_path) if e.is_dialog]
+
+    assert [(e.text, e.string_index) for e in responses] == [("First", 4)]
 
 
 @pytest.mark.asyncio

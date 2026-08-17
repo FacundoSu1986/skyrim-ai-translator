@@ -21,7 +21,7 @@ from src.voice_mapper import resolve_voice_for_entry
 from src.free_translator import free_translator_callable
 from src.translator import translate_entries, create_openai_compatible_translator
 from src.tts_generator import generate_voice_file
-from src.dsd_exporter import export_to_dsd
+from src.dsd_exporter import export_to_dsd, validate_dsd_entries, DSDExportError
 
 logger = logging.getLogger(__name__)
 
@@ -248,10 +248,17 @@ async def upload_json(
         if plugin_name.lower().endswith(ext):
             plugin_name = plugin_name[:-len(ext)]
 
+    # Real plugin filename (with extension) for DSD output paths; never fabricated
+    # for legacy JSON uploads.
+    target_plugin_filename = None
+    if Path(safe_name).suffix.lower() in [".esp", ".esm", ".esl"]:
+        target_plugin_filename = safe_name
+
     jobs[job_id] = {
         "status": "pending",
         "file_path": str(file_path),
         "plugin_name": plugin_name,
+        "target_plugin_filename": target_plugin_filename,
         "config": cfg,
         "api_key": transient_api_key,
         "progress": 0,
@@ -287,10 +294,12 @@ async def start_mo2_translation(req: MO2TranslateRequest):
     json_files = sorted(set(candidate_jsons))
 
     plugin_file_name = mod_name
+    target_plugin_filename = None
     if esp_files:
         # Native ESP plugin found: prioritize binary parsing for authentic game data
         target_file = esp_files[0]
         plugin_file_name = target_file.stem
+        target_plugin_filename = target_file.name
         file_path = upload_dir / target_file.name
         shutil.copy(target_file, file_path)
     elif json_files:
@@ -314,6 +323,7 @@ async def start_mo2_translation(req: MO2TranslateRequest):
         "status": "pending",
         "file_path": str(file_path),
         "plugin_name": plugin_file_name,
+        "target_plugin_filename": target_plugin_filename,
         "config": cfg,
         # Transient: consumed and removed by the websocket handler
         "api_key": req.api_key,
@@ -358,11 +368,27 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             "status": job["status"]
         })
 
+    async def fail_with_code(error_code: str, human_msg: str):
+        job["status"] = "error"
+        job["error"] = human_msg
+        job["error_code"] = error_code
+        job["logs"].append({"text": f"❌ [{error_code}] {human_msg}", "level": "error"})
+        await websocket.send_json({
+            "status": "error",
+            "error_code": error_code,
+            "error": human_msg,
+            "log": f"❌ [{error_code}] {human_msg}",
+            "level": "error",
+            "progress": 100,
+            "job_id": job_id
+        })
+
     try:
         await log_msg(f"⚔️ Iniciando pipeline para '{job['plugin_name']}'...", 5, "info")
 
         file_p = Path(job["file_path"])
-        if file_p.suffix.lower() in [".esp", ".esm", ".esl"]:
+        is_plugin_source = file_p.suffix.lower() in [".esp", ".esm", ".esl"]
+        if is_plugin_source:
             await log_msg(f"📜 Extrayendo cadenas binarias directamente de '{file_p.name}'...", 15, "info")
             master_search_paths = []
             if job.get("mo2_path") and job.get("mod_name"):
@@ -406,6 +432,15 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             return
 
         await log_msg(f"✅ {len(entries)} textos y diálogos extraídos con éxito.", 25, "success")
+
+        # 1.5 DSD preflight (plugin sources only): fail fast on incomplete
+        # metadata or types DSD 1.4.3 cannot represent, BEFORE spending LLM/TTS.
+        if is_plugin_source:
+            try:
+                validate_dsd_entries(entries)
+            except DSDExportError as err:
+                await fail_with_code(err.code, f"Validación DSD fallida: {err}")
+                return
 
         # 2. Translation with Fail-Fast Contract
         await log_msg(f"🌐 Traduciendo al {target_lang}...", 35, "translate")
@@ -460,7 +495,10 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 return
 
             await log_msg(f"🎙️ Generando voces neuronales ({total_dialogs} diálogos)...", 65, "audio")
-            voice_base_dir = build_dir / "Sound" / "Voice" / f"{job['plugin_name']}.esp"
+            # Real plugin filename when known; legacy JSON jobs keep the old
+            # plugin_name-based folder since no plugin can be demonstrated.
+            voice_dir_name = job.get("target_plugin_filename") or f"{job['plugin_name']}.esp"
+            voice_base_dir = build_dir / "Sound" / "Voice" / voice_dir_name
             voice_base_dir.mkdir(parents=True, exist_ok=True)
 
             completed_count = 0
@@ -496,11 +534,27 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         else:
             await log_msg("⏩ Generación de audio omitida.", 85, "info")
 
-        # 4. Export DSD JSON
-        await log_msg("📦 Forjando diccionario Dynamic String Distributor (SKSE DSD)...", 90, "dsd")
-        dsd_dir = build_dir / "SKSE" / "Plugins" / "DSD"
-        dsd_dir.mkdir(parents=True, exist_ok=True)
-        export_to_dsd(translated_entries, dsd_dir / f"{job['plugin_name']}.json")
+        # 4. Export DSD JSON (official Dynamic String Distributor 1.4.3 layout).
+        # Legacy JSON input carries no DSD metadata: the export is skipped
+        # explicitly, never fabricated, and never reported as success.
+        if is_plugin_source and job.get("target_plugin_filename"):
+            await log_msg("📦 Forjando diccionario Dynamic String Distributor (SKSE DSD)...", 90, "dsd")
+            try:
+                dsd_dir = (
+                    build_dir / "SKSE" / "Plugins" / "DynamicStringDistributor"
+                    / job["target_plugin_filename"]
+                )
+                export_to_dsd(translated_entries, dsd_dir / "SkyrimAITranslator.json")
+            except DSDExportError as err:
+                await fail_with_code(err.code, f"Fallo exportando DSD: {err}")
+                return
+            await log_msg("✅ DSD listo en SKSE/Plugins/DynamicStringDistributor.", 92, "success")
+        else:
+            await log_msg(
+                "⚠️ Export DSD omitido: el input JSON legacy no provee metadata DSD "
+                "(form_id|plugin, type, index). No se fabrica metadata.",
+                90, "warning"
+            )
 
         # 5. Auto-inject directly to MO2 if requested
         if auto_inject and job.get("mo2_path") and job.get("mod_name"):
