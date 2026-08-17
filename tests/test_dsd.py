@@ -253,6 +253,64 @@ def test_unsupported_type_raises_dsd_unsupported_type(tmp_path: Path, record_typ
         validate_dsd_entries(entries)
 
 
+def test_dial_full_is_supported(tmp_path: Path):
+    """Upstream DSD 1.4.3 supports DIAL FULL (kRuntime1); the parser extracts
+    it, so it must pass validation and export with its exact type string."""
+    dial = make_entry(
+        form_id="01000999", local_object_id=0x000999, record_type="DIAL",
+        subrecord_type="FULL", translated_text="Tema de diálogo",
+    )
+
+    validate_dsd_entries([dial])  # must PASS
+
+    output_file = tmp_path / "dial.json"
+    export_to_dsd([dial], output_file)
+
+    (item,) = read_json(output_file)
+    assert item["type"] == "DIAL FULL"
+    assert item["form_id"] == "0x000999|TargetMod.esp"
+    assert item["string"] == "Tema de diálogo"
+    assert "index" not in item
+
+
+def test_dial_desc_is_not_supported(tmp_path: Path):
+    """Upstream DSD 1.4.3 has no DIAL DESC case: it must fail fast instead of
+    being announced as supported."""
+    dial_desc = make_entry(record_type="DIAL", subrecord_type="DESC")
+
+    with pytest.raises(DSDUnsupportedTypeError) as exc_info:
+        export_to_dsd([dial_desc], tmp_path / "must_not_exist.json")
+
+    assert exc_info.value.code == "DSD_UNSUPPORTED_TYPE"
+    assert "DIAL DESC" in str(exc_info.value)
+    assert not (tmp_path / "must_not_exist.json").exists()
+
+
+@pytest.mark.parametrize(
+    "dsd_type",
+    [
+        pytest.param("GMST DATA", id="gmst_data_needs_editor_id_not_emitted"),
+        pytest.param("QUST CNAM", id="quest_cnam_not_extracted"),
+        pytest.param("MESG ITXT", id="mesg_itxt_not_extracted"),
+        pytest.param("PERK EPF2", id="perk_epf2_not_extracted"),
+        pytest.param("PERK EPFD", id="perk_epfd_not_extracted"),
+        pytest.param("BOOK CNAM", id="book_cnam_not_extracted"),
+        pytest.param("REFR FULL", id="refr_full_not_extracted"),
+        pytest.param("CELL FULL", id="cell_full_not_extracted"),
+    ],
+)
+def test_not_extracted_types_are_not_announced_as_supported(tmp_path: Path, dsd_type):
+    """The allowlist only contains pairs the current pipeline implements end
+    to end. Types the parser never extracts (or whose contract PR #6 does not
+    complete, e.g. GMST DATA needing editor_id) must fail fast instead of
+    being silently accepted with an incomplete entry."""
+    record_type, subrecord_type = dsd_type.split(" ", 1)
+    entry = make_entry(record_type=record_type, subrecord_type=subrecord_type)
+
+    with pytest.raises(DSDUnsupportedTypeError):
+        validate_dsd_entries([entry])
+
+
 def test_duplicate_canonical_identity_raises_dsd_duplicate_identity(tmp_path: Path):
     # Hand-built duplicates: the parser would deduplicate these, the exporter
     # must defend its own contract regardless of the caller.

@@ -20,40 +20,38 @@ class DSDDuplicateIdentityError(DSDExportError):
     code = "DSD_DUPLICATE_IDENTITY"
 
 
-# Allowlist mirrored from Dynamic String Distributor 1.4.3
-# (Manager::getTranslationType). Anything outside this set cannot be
-# represented by DSD and must fail fast instead of silently vanishing at
+# Allowlist = pairs the current pipeline implements end to end:
+# (record, subrecord) combos the parser actually extracts AND that Dynamic
+# String Distributor 1.4.3 can represent (Manager::getTranslationType).
+# Anything outside this set fails fast instead of silently vanishing at
 # game runtime (DSD only logs unknown types at debug level).
+#
+# Pairs the parser extracts but DSD cannot represent (FACT FULL, RACE DNAM,
+# DIAL DESC) correctly produce DSD_UNSUPPORTED_TYPE. Upstream-only types the
+# parser never extracts (GMST DATA, REFR FULL, MESG ITXT, PERK EPF2/EPFD,
+# QUST CNAM, BOOK CNAM, CELL FULL, ...) are NOT announced as supported:
+# accepting them would promise contracts PR #6 does not complete (e.g. GMST
+# DATA additionally requires editor_id, which the exporter never emits).
 _FULL_RECORDS = (
-    "ACTI ALCH AMMO APPA ARMO AVIF BOOK CELL CONT CLAS DOOR ENCH EXPL "
-    "FLOR FURN HAZD INGR KEYM LCTN LIGH MESG MGEF MISC PERK PROJ QUST "
-    "RACE SCRL SHOU SLGM SPEL TACT TREE WATR WEAP WOOP WRLD NPC_"
+    "ACTI ALCH ARMO BOOK DIAL FLOR LCTN MESG MGEF MISC "
+    "NPC_ PERK QUST RACE SPEL WEAP"
 ).split()
 
-_DESC_RECORDS = (
-    "LSCR DIAL AMMO ARMO AVIF BOOK MESG PERK RACE SCRL SHOU SPEL WEAP"
-).split()
+_DESC_RECORDS = "ARMO BOOK MESG PERK RACE SPEL WEAP".split()
 
 DSD_SUPPORTED_TYPES = frozenset(
+    # DIAL FULL is upstream kRuntime1 rather than kFullName; membership is
+    # identical, so it lives with the FULL records here.
     {f"{record} FULL" for record in _FULL_RECORDS}
     | {f"{record} DESC" for record in _DESC_RECORDS}
     | {
-        "MGEF DNAM",
+        "INFO NAM1",
+        "INFO RNAM",
         "NPC_ SHRT",
-        "REGN RDMP",
-        "WOOP TNAM",
-        "MESG ITXT",
-        "PERK EPF2",
-        "QUST NNAM",
-        "PERK EPFD",
+        "MGEF DNAM",
         "ACTI RNAM",
         "FLOR RNAM",
-        "GMST DATA",
-        "REFR FULL",
-        "QUST CNAM",
-        "BOOK CNAM",
-        "INFO RNAM",
-        "INFO NAM1",
+        "QUST NNAM",
     }
 )
 
@@ -63,10 +61,6 @@ DSD_SUPPORTED_TYPES = frozenset(
 INDEX_REQUIRED_TYPES = frozenset({
     "INFO NAM1",
     "QUST NNAM",
-    "MESG ITXT",
-    "PERK EPF2",
-    "PERK EPFD",
-    "QUST CNAM",
 })
 
 
