@@ -373,8 +373,8 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     if current_status == "error":
         await websocket.send_json({
             "status": "error",
-            "error_code": job.get("error_code", "INTERNAL_ERROR"),
-            "error": job.get("error", "Error desconocido"),
+            "error": job.get("error"),
+            "error_code": job.get("error_code"),
             "progress": 100,
             "job_id": job_id,
         })

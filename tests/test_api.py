@@ -674,3 +674,24 @@ def test_websocket_reconnect_error_job():
         jobs.pop(job_id, None)
 
 
+def test_websocket_reconnect_error_job_without_error_code():
+    """A WebSocket connecting to an 'error' job without error_code returns None for error_code."""
+    job_id = "test-job-error-none-code"
+    jobs[job_id] = {
+        "status": "error",
+        "error": "Uncaught exception message",
+        "progress": 100,
+    }
+    try:
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+            msg = ws.receive_json()
+            assert msg["status"] == "error"
+            assert msg["error_code"] is None
+            assert msg["error"] == "Uncaught exception message"
+            assert msg["progress"] == 100
+            assert msg["job_id"] == job_id
+    finally:
+        jobs.pop(job_id, None)
+
+
+
