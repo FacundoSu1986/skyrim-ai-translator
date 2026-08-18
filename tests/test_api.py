@@ -694,4 +694,83 @@ def test_websocket_reconnect_error_job_without_error_code():
         jobs.pop(job_id, None)
 
 
+def test_websocket_real_overlapping_connection_rejects_second(tmp_path):
+    """Real overlapping test: A first WebSocket starts processing a pending job;
+    while running, a second WebSocket connects and receives JOB_ALREADY_PROCESSING."""
+    import threading
+    from unittest.mock import patch
+
+    test_json = tmp_path / "OverlapMod.json"
+    test_json.write_text('[{"FormID": "0001", "Text": "Hello world"}]', encoding="utf-8")
+
+    with open(test_json, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("OverlapMod.json", f, "application/json")},
+            data={"config": json.dumps({"generate_voice": False})}
+        )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+    assert jobs[job_id]["status"] == "pending"
+
+    first_ws_reached_pipeline = threading.Event()
+    second_ws_checked = threading.Event()
+    first_ws_messages = []
+    first_ws_error = []
+
+    def mock_translate(*args, **kwargs):
+        first_ws_reached_pipeline.set()
+        assert second_ws_checked.wait(timeout=5.0), "Timeout waiting for second WS check"
+        from src.models import StringEntry
+        return [StringEntry(form_id="0001", text="Hola mundo", is_dialog=False)]
+
+    def run_first_ws():
+        try:
+            with patch("api.translate_entries", side_effect=mock_translate):
+                with client.websocket_connect(f"/ws/progress/{job_id}") as ws1:
+                    while True:
+                        try:
+                            msg = ws1.receive_json()
+                            first_ws_messages.append(msg)
+                            if msg.get("status") in ["completed", "error"]:
+                                break
+                        except Exception:
+                            break
+        except Exception as e:
+            first_ws_error.append(e)
+
+    t1 = threading.Thread(target=run_first_ws)
+    t1.start()
+
+    try:
+        # Wait until ws1 has started the pipeline and reached translate_entries
+        assert first_ws_reached_pipeline.wait(timeout=5.0), "Timeout waiting for first WS to reach pipeline"
+
+        # At this exact moment, job is actively in processing
+        assert jobs[job_id]["status"] == "processing"
+
+        # Connect second WebSocket concurrently
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws2:
+            msg2 = ws2.receive_json()
+            assert msg2["status"] == "error"
+            assert msg2["error_code"] == "JOB_ALREADY_PROCESSING"
+            assert msg2["error"] == "El trabajo ya se encuentra en procesamiento."
+            assert msg2["progress"] >= 0
+            assert msg2["job_id"] == job_id
+
+        # Signal first WS thread to resume and complete
+        second_ws_checked.set()
+        t1.join(timeout=5.0)
+        assert not t1.is_alive(), "First WS thread timed out"
+        assert not first_ws_error, f"First WS thread raised error: {first_ws_error}"
+
+        # First WS should have completed successfully
+        assert jobs[job_id]["status"] == "completed"
+        assert any(m.get("status") == "completed" for m in first_ws_messages)
+    finally:
+        second_ws_checked.set()
+        t1.join(timeout=2.0)
+
+
+
 
