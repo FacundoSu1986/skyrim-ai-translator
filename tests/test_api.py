@@ -611,3 +611,66 @@ def test_mo2_start_json_has_no_target_plugin_filename(tmp_path):
     job = jobs[res.json()["job_id"]]
     assert job["target_plugin_filename"] is None
 
+
+def test_websocket_job_already_processing_rejects_concurrent_connection():
+    """A second WebSocket connecting while status is 'processing' receives JOB_ALREADY_PROCESSING with current progress."""
+    job_id = "test-job-processing-123"
+    jobs[job_id] = {
+        "status": "processing",
+        "progress": 42,
+        "logs": [],
+    }
+    try:
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+            msg = ws.receive_json()
+            assert msg["status"] == "error"
+            assert msg["error_code"] == "JOB_ALREADY_PROCESSING"
+            assert msg["error"] == "El trabajo ya se encuentra en procesamiento."
+            assert msg["progress"] == 42
+            assert msg["job_id"] == job_id
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_websocket_reconnect_completed_job():
+    """A WebSocket connecting to a 'completed' job receives download_url, has_mo2, and progress 100."""
+    job_id = "test-job-completed-456"
+    jobs[job_id] = {
+        "status": "completed",
+        "progress": 100,
+        "mo2_path": "/fake/mo2/path",
+        "mod_name": "CoolMod",
+    }
+    try:
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+            msg = ws.receive_json()
+            assert msg["status"] == "completed"
+            assert msg["progress"] == 100
+            assert msg["download_url"] == f"/api/download/{job_id}"
+            assert msg["job_id"] == job_id
+            assert msg["has_mo2"] is True
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_websocket_reconnect_error_job():
+    """A WebSocket connecting to an 'error' job receives the error, error_code, and progress 100."""
+    job_id = "test-job-error-789"
+    jobs[job_id] = {
+        "status": "error",
+        "error_code": "NO_TRANSLATABLE_CONTENT",
+        "error": "No hay contenido traducible.",
+        "progress": 100,
+    }
+    try:
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+            msg = ws.receive_json()
+            assert msg["status"] == "error"
+            assert msg["error_code"] == "NO_TRANSLATABLE_CONTENT"
+            assert msg["error"] == "No hay contenido traducible."
+            assert msg["progress"] == 100
+            assert msg["job_id"] == job_id
+    finally:
+        jobs.pop(job_id, None)
+
+

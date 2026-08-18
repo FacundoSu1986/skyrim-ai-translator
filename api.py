@@ -346,6 +346,41 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         return
 
     job = jobs[job_id]
+    current_status = job.get("status", "pending")
+
+    if current_status == "processing":
+        await websocket.send_json({
+            "status": "error",
+            "error_code": "JOB_ALREADY_PROCESSING",
+            "error": "El trabajo ya se encuentra en procesamiento.",
+            "progress": job.get("progress", 0),
+            "job_id": job_id,
+        })
+        await websocket.close()
+        return
+
+    if current_status == "completed":
+        await websocket.send_json({
+            "status": "completed",
+            "progress": 100,
+            "download_url": f"/api/download/{job_id}",
+            "job_id": job_id,
+            "has_mo2": bool(job.get("mo2_path") and job.get("mod_name")),
+        })
+        await websocket.close()
+        return
+
+    if current_status == "error":
+        await websocket.send_json({
+            "status": "error",
+            "error_code": job.get("error_code", "INTERNAL_ERROR"),
+            "error": job.get("error", "Error desconocido"),
+            "progress": 100,
+            "job_id": job_id,
+        })
+        await websocket.close()
+        return
+
     job["status"] = "processing"
     cfg = job.get("config", {})
     target_lang = cfg.get("target_lang", "Spanish")
