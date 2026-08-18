@@ -717,6 +717,7 @@ def test_websocket_real_overlapping_connection_rejects_second(tmp_path):
     second_ws_checked = threading.Event()
     first_ws_messages = []
     first_ws_error = []
+    mock_trans_ref = []
 
     def mock_translate(*args, **kwargs):
         first_ws_reached_pipeline.set()
@@ -726,7 +727,8 @@ def test_websocket_real_overlapping_connection_rejects_second(tmp_path):
 
     def run_first_ws():
         try:
-            with patch("api.translate_entries", side_effect=mock_translate):
+            with patch("api.translate_entries", side_effect=mock_translate) as mock_trans:
+                mock_trans_ref.append(mock_trans)
                 with client.websocket_connect(f"/ws/progress/{job_id}") as ws1:
                     while True:
                         try:
@@ -764,9 +766,11 @@ def test_websocket_real_overlapping_connection_rejects_second(tmp_path):
         assert not t1.is_alive(), "First WS thread timed out"
         assert not first_ws_error, f"First WS thread raised error: {first_ws_error}"
 
-        # First WS should have completed successfully
+        # First WS should have completed successfully and invoked translator exactly once
         assert jobs[job_id]["status"] == "completed"
         assert any(m.get("status") == "completed" for m in first_ws_messages)
+        assert len(mock_trans_ref) == 1
+        assert mock_trans_ref[0].call_count == 1
     finally:
         second_ws_checked.set()
         t1.join(timeout=2.0)
