@@ -478,16 +478,14 @@ def test_websocket_esp_dsd_official_output_path_and_content(tmp_path):
     assert len(info_items) == 2
 
 
-def test_websocket_preflight_unsupported_type_fails_before_translation(tmp_path, monkeypatch):
+def test_websocket_preflight_unsupported_type_fails_before_translation(tmp_path):
     """FACT FULL cannot be represented by DSD 1.4.3: the job must fail fast
-    with DSD_UNSUPPORTED_TYPE before spending any LLM call."""
-    import api as api_module
+    with DSD_UNSUPPORTED_TYPE before translation and voice generation."""
+    from unittest.mock import patch, MagicMock
     from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
 
-    async def _translator_must_not_run(_text, _context):
-        raise AssertionError("translator must not run when DSD preflight fails")
-
-    monkeypatch.setattr(api_module, "free_translator_callable", _translator_must_not_run)
+    mock_translate = MagicMock()
+    mock_generate_voice = MagicMock()
 
     mod_esp = tmp_path / "FactionMod.esp"
     fact_rec = make_record(
@@ -500,18 +498,23 @@ def test_websocket_preflight_unsupported_type_fails_before_translation(tmp_path,
         res = client.post(
             "/api/upload",
             files={"file": ("FactionMod.esp", f, "application/octet-stream")},
-            data={"config": json.dumps({"generate_voice": False})}
+            data={"config": json.dumps({"generate_voice": True})}
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
 
-    messages = _run_websocket_job(job_id)
+    with patch("api.translate_entries", mock_translate), \
+         patch("api.generate_voice_file", mock_generate_voice):
+        messages = _run_websocket_job(job_id)
 
     assert jobs[job_id]["status"] == "error"
     assert jobs[job_id]["error_code"] == "DSD_UNSUPPORTED_TYPE"
     error_events = [m for m in messages if m.get("status") == "error"]
     assert error_events[-1]["error_code"] == "DSD_UNSUPPORTED_TYPE"
     assert "FACT FULL" in error_events[-1]["error"]
+
+    assert mock_translate.call_count == 0
+    assert mock_generate_voice.call_count == 0
 
 
 def test_websocket_preflight_missing_index_fails_fast(tmp_path):
