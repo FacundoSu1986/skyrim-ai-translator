@@ -933,7 +933,7 @@ def test_websocket_real_overlapping_connection_with_api_key_regression(tmp_path)
         assert free_translator_callable.call_count == 0
 
         # Verify api_key argument passed to factory
-        called_args, called_kwargs = create_openai_compatible_translator.call_args
+        called_args, _ = create_openai_compatible_translator.call_args
         assert called_args[0] == "sk-secret-test-key"
     finally:
         second_ws_checked.set()
@@ -967,17 +967,23 @@ def test_download_state_gate_non_completed_job():
         jobs.pop(job_id, None)
 
 
-def test_download_state_gate_completed_missing_zip():
-    """GET /api/download/{job_id} for completed job with missing ZIP file returns 404."""
+def test_download_state_gate_completed_missing_zip(tmp_path):
+    """GET /api/download/{job_id} for completed job with missing or non-file ZIP path returns 404."""
     job_id = "test-job-download-missing-zip"
     jobs[job_id] = {
         "status": "completed",
-        "zip_path": "Z:\\nonexistent\\path\\bundle.zip",
+        "zip_path": str(tmp_path / "missing_bundle.zip"),
     }
     try:
         res = client.get(f"/api/download/{job_id}")
         assert res.status_code == 404
         assert "ZIP no está listo" in res.json()["detail"]
+
+        # Also exercise the not is_file() branch when pointing to a directory
+        jobs[job_id]["zip_path"] = str(tmp_path)
+        res_dir = client.get(f"/api/download/{job_id}")
+        assert res_dir.status_code == 404
+        assert "ZIP no está listo" in res_dir.json()["detail"]
     finally:
         jobs.pop(job_id, None)
 
