@@ -346,6 +346,41 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
         return
 
     job = jobs[job_id]
+    current_status = job.get("status", "pending")
+
+    if current_status == "processing":
+        await websocket.send_json({
+            "status": "error",
+            "error_code": "JOB_ALREADY_PROCESSING",
+            "error": "El trabajo ya se encuentra en procesamiento.",
+            "progress": job.get("progress", 0),
+            "job_id": job_id,
+        })
+        await websocket.close()
+        return
+
+    if current_status == "completed":
+        await websocket.send_json({
+            "status": "completed",
+            "progress": 100,
+            "download_url": f"/api/download/{job_id}",
+            "job_id": job_id,
+            "has_mo2": bool(job.get("mo2_path") and job.get("mod_name")),
+        })
+        await websocket.close()
+        return
+
+    if current_status == "error":
+        await websocket.send_json({
+            "status": "error",
+            "error": job.get("error"),
+            "error_code": job.get("error_code"),
+            "progress": 100,
+            "job_id": job_id,
+        })
+        await websocket.close()
+        return
+
     job["status"] = "processing"
     cfg = job.get("config", {})
     target_lang = cfg.get("target_lang", "Spanish")
@@ -607,8 +642,11 @@ async def download_result(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Trabajo no encontrado")
 
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="El trabajo no ha finalizado")
+
     zip_path = Path(job.get("zip_path", ""))
-    if not zip_path.exists():
+    if not zip_path.exists() or not zip_path.is_file():
         raise HTTPException(status_code=404, detail="El archivo ZIP no está listo")
 
     return FileResponse(
@@ -624,6 +662,9 @@ async def inject_to_mo2(job_id: str, req: InjectRequest):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Trabajo no encontrado")
+
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="El trabajo no ha finalizado")
 
     build_dir = Path(job.get("output_dir", ""))
     if not build_dir.exists():

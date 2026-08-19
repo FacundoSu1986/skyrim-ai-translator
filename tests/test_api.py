@@ -103,6 +103,7 @@ def test_mo2_start_and_inject(tmp_path):
     
     # Simulate job build output
     job = jobs[job_id]
+    job["status"] = "completed"
     build_dir = Path(job["output_dir"])
     build_dir.mkdir(parents=True, exist_ok=True)
     (build_dir / "test_file.txt").write_text("Hello Skyrim")
@@ -477,16 +478,14 @@ def test_websocket_esp_dsd_official_output_path_and_content(tmp_path):
     assert len(info_items) == 2
 
 
-def test_websocket_preflight_unsupported_type_fails_before_translation(tmp_path, monkeypatch):
+def test_websocket_preflight_unsupported_type_fails_before_translation(tmp_path):
     """FACT FULL cannot be represented by DSD 1.4.3: the job must fail fast
-    with DSD_UNSUPPORTED_TYPE before spending any LLM call."""
-    import api as api_module
+    with DSD_UNSUPPORTED_TYPE before translation and voice generation."""
+    from unittest.mock import patch, MagicMock
     from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
 
-    async def _translator_must_not_run(_text, _context):
-        raise AssertionError("translator must not run when DSD preflight fails")
-
-    monkeypatch.setattr(api_module, "free_translator_callable", _translator_must_not_run)
+    mock_translate = MagicMock()
+    mock_generate_voice = MagicMock()
 
     mod_esp = tmp_path / "FactionMod.esp"
     fact_rec = make_record(
@@ -499,18 +498,23 @@ def test_websocket_preflight_unsupported_type_fails_before_translation(tmp_path,
         res = client.post(
             "/api/upload",
             files={"file": ("FactionMod.esp", f, "application/octet-stream")},
-            data={"config": json.dumps({"generate_voice": False})}
+            data={"config": json.dumps({"generate_voice": True})}
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
 
-    messages = _run_websocket_job(job_id)
+    with patch("api.translate_entries", mock_translate), \
+         patch("api.generate_voice_file", mock_generate_voice):
+        messages = _run_websocket_job(job_id)
 
     assert jobs[job_id]["status"] == "error"
     assert jobs[job_id]["error_code"] == "DSD_UNSUPPORTED_TYPE"
     error_events = [m for m in messages if m.get("status") == "error"]
     assert error_events[-1]["error_code"] == "DSD_UNSUPPORTED_TYPE"
     assert "FACT FULL" in error_events[-1]["error"]
+
+    assert mock_translate.call_count == 0
+    assert mock_generate_voice.call_count == 0
 
 
 def test_websocket_preflight_missing_index_fails_fast(tmp_path):
@@ -611,3 +615,452 @@ def test_mo2_start_json_has_no_target_plugin_filename(tmp_path):
     job = jobs[res.json()["job_id"]]
     assert job["target_plugin_filename"] is None
 
+
+def test_websocket_job_already_processing_rejects_concurrent_connection():
+    """A second WebSocket connecting while status is 'processing' receives JOB_ALREADY_PROCESSING with current progress."""
+    job_id = "test-job-processing-123"
+    jobs[job_id] = {
+        "status": "processing",
+        "progress": 42,
+        "logs": [],
+    }
+    try:
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+            msg = ws.receive_json()
+            assert msg["status"] == "error"
+            assert msg["error_code"] == "JOB_ALREADY_PROCESSING"
+            assert msg["error"] == "El trabajo ya se encuentra en procesamiento."
+            assert msg["progress"] == 42
+            assert msg["job_id"] == job_id
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_websocket_reconnect_completed_job():
+    """A WebSocket connecting to a 'completed' job receives download_url, has_mo2, progress 100, and does NOT rerun any pipeline call site."""
+    from unittest.mock import patch, MagicMock
+    mock_translate = MagicMock()
+    mock_llm = MagicMock()
+    mock_free = MagicMock()
+    mock_generate_voice = MagicMock()
+    mock_validate_dsd = MagicMock()
+    mock_export_dsd = MagicMock()
+
+    job_id = "test-job-completed-456"
+    jobs[job_id] = {
+        "status": "completed",
+        "progress": 100,
+        "mo2_path": "/fake/mo2/path",
+        "mod_name": "CoolMod",
+    }
+    try:
+        with patch("api.translate_entries", mock_translate), \
+             patch("api.create_openai_compatible_translator", mock_llm), \
+             patch("api.free_translator_callable", mock_free), \
+             patch("api.generate_voice_file", mock_generate_voice), \
+             patch("api.validate_dsd_entries", mock_validate_dsd), \
+             patch("api.export_to_dsd", mock_export_dsd):
+            with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+                msg = ws.receive_json()
+                assert msg["status"] == "completed"
+                assert msg["progress"] == 100
+                assert msg["download_url"] == f"/api/download/{job_id}"
+                assert msg["job_id"] == job_id
+                assert msg["has_mo2"] is True
+
+        assert jobs[job_id]["status"] == "completed"
+        assert mock_translate.call_count == 0
+        assert mock_llm.call_count == 0
+        assert mock_free.call_count == 0
+        assert mock_generate_voice.call_count == 0
+        assert mock_validate_dsd.call_count == 0
+        assert mock_export_dsd.call_count == 0
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_websocket_reconnect_error_job():
+    """A WebSocket connecting to an 'error' job receives error fields, progress 100, and does NOT rerun any pipeline call site."""
+    from unittest.mock import patch, MagicMock
+    mock_translate = MagicMock()
+    mock_llm = MagicMock()
+    mock_free = MagicMock()
+    mock_generate_voice = MagicMock()
+    mock_validate_dsd = MagicMock()
+    mock_export_dsd = MagicMock()
+
+    job_id = "test-job-error-789"
+    jobs[job_id] = {
+        "status": "error",
+        "error_code": "NO_TRANSLATABLE_CONTENT",
+        "error": "No hay contenido traducible.",
+        "progress": 100,
+    }
+    try:
+        with patch("api.translate_entries", mock_translate), \
+             patch("api.create_openai_compatible_translator", mock_llm), \
+             patch("api.free_translator_callable", mock_free), \
+             patch("api.generate_voice_file", mock_generate_voice), \
+             patch("api.validate_dsd_entries", mock_validate_dsd), \
+             patch("api.export_to_dsd", mock_export_dsd):
+            with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+                msg = ws.receive_json()
+                assert msg["status"] == "error"
+                assert msg["error_code"] == "NO_TRANSLATABLE_CONTENT"
+                assert msg["error"] == "No hay contenido traducible."
+                assert msg["progress"] == 100
+                assert msg["job_id"] == job_id
+
+        assert jobs[job_id]["status"] == "error"
+        assert mock_translate.call_count == 0
+        assert mock_llm.call_count == 0
+        assert mock_free.call_count == 0
+        assert mock_generate_voice.call_count == 0
+        assert mock_validate_dsd.call_count == 0
+        assert mock_export_dsd.call_count == 0
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_websocket_reconnect_error_job_without_error_code():
+    """A WebSocket connecting to an 'error' job without error_code returns None for error_code and does NOT rerun."""
+    from unittest.mock import patch, MagicMock
+    mock_translate = MagicMock()
+    mock_llm = MagicMock()
+    mock_free = MagicMock()
+    mock_generate_voice = MagicMock()
+    mock_validate_dsd = MagicMock()
+    mock_export_dsd = MagicMock()
+
+    job_id = "test-job-error-none-code"
+    jobs[job_id] = {
+        "status": "error",
+        "error": "Uncaught exception message",
+        "progress": 100,
+    }
+    try:
+        with patch("api.translate_entries", mock_translate), \
+             patch("api.create_openai_compatible_translator", mock_llm), \
+             patch("api.free_translator_callable", mock_free), \
+             patch("api.generate_voice_file", mock_generate_voice), \
+             patch("api.validate_dsd_entries", mock_validate_dsd), \
+             patch("api.export_to_dsd", mock_export_dsd):
+            with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+                msg = ws.receive_json()
+                assert msg["status"] == "error"
+                assert msg["error_code"] is None
+                assert msg["error"] == "Uncaught exception message"
+                assert msg["progress"] == 100
+                assert msg["job_id"] == job_id
+
+        assert jobs[job_id]["status"] == "error"
+        assert mock_translate.call_count == 0
+        assert mock_llm.call_count == 0
+        assert mock_free.call_count == 0
+        assert mock_generate_voice.call_count == 0
+        assert mock_validate_dsd.call_count == 0
+        assert mock_export_dsd.call_count == 0
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_websocket_real_overlapping_connection_rejects_second(tmp_path):
+    """Real overlapping test: A first WebSocket starts processing a pending job;
+    while running, a second WebSocket connects and receives JOB_ALREADY_PROCESSING."""
+    import threading
+    from unittest.mock import patch
+
+    test_json = tmp_path / "OverlapMod.json"
+    test_json.write_text('[{"FormID": "0001", "Text": "Hello world"}]', encoding="utf-8")
+
+    with open(test_json, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("OverlapMod.json", f, "application/json")},
+            data={"config": json.dumps({"generate_voice": False})}
+        )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+    assert jobs[job_id]["status"] == "pending"
+
+    first_ws_reached_pipeline = threading.Event()
+    second_ws_checked = threading.Event()
+    first_ws_messages = []
+    first_ws_error = []
+    mock_trans_ref = []
+
+    def mock_translate(*args, **kwargs):
+        first_ws_reached_pipeline.set()
+        assert second_ws_checked.wait(timeout=5.0), "Timeout waiting for second WS check"
+        from src.models import StringEntry
+        return [StringEntry(form_id="0001", text="Hola mundo", is_dialog=False)]
+
+    def run_first_ws():
+        try:
+            with patch("api.translate_entries", side_effect=mock_translate) as mock_trans:
+                mock_trans_ref.append(mock_trans)
+                with client.websocket_connect(f"/ws/progress/{job_id}") as ws1:
+                    while True:
+                        try:
+                            msg = ws1.receive_json()
+                            first_ws_messages.append(msg)
+                            if msg.get("status") in ["completed", "error"]:
+                                break
+                        except Exception:
+                            break
+        except Exception as e:
+            first_ws_error.append(e)
+
+    t1 = threading.Thread(target=run_first_ws)
+    t1.start()
+
+    try:
+        # Wait until ws1 has started the pipeline and reached translate_entries
+        assert first_ws_reached_pipeline.wait(timeout=5.0), "Timeout waiting for first WS to reach pipeline"
+
+        # At this exact moment, job is actively in processing
+        assert jobs[job_id]["status"] == "processing"
+
+        # Connect second WebSocket concurrently
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws2:
+            msg2 = ws2.receive_json()
+            assert msg2["status"] == "error"
+            assert msg2["error_code"] == "JOB_ALREADY_PROCESSING"
+            assert msg2["error"] == "El trabajo ya se encuentra en procesamiento."
+            assert msg2["progress"] >= 0
+            assert msg2["job_id"] == job_id
+
+        # Signal first WS thread to resume and complete
+        second_ws_checked.set()
+        t1.join(timeout=5.0)
+        assert not t1.is_alive(), "First WS thread timed out"
+        assert not first_ws_error, f"First WS thread raised error: {first_ws_error}"
+
+        # First WS should have completed successfully and invoked translator exactly once
+        assert jobs[job_id]["status"] == "completed"
+        assert any(m.get("status") == "completed" for m in first_ws_messages)
+        assert len(mock_trans_ref) == 1
+        assert mock_trans_ref[0].call_count == 1
+    finally:
+        second_ws_checked.set()
+        t1.join(timeout=2.0)
+
+
+def test_websocket_real_overlapping_connection_with_api_key_regression(tmp_path):
+    """Real overlapping test with API key: Verifies that a job uploaded with api_key
+    uses create_openai_compatible_translator exactly once, never calls free_translator_callable,
+    purges the key from memory, and rejects the second concurrent WebSocket connection."""
+    import threading
+    from unittest.mock import patch, MagicMock
+
+    test_json = tmp_path / "ApiKeyOverlapMod.json"
+    test_json.write_text('[{"FormID": "0001", "Text": "Translate with key"}]', encoding="utf-8")
+
+    with open(test_json, "rb") as f:
+        res = client.post(
+            "/api/upload",
+            files={"file": ("ApiKeyOverlapMod.json", f, "application/json")},
+            data={"config": json.dumps({"api_key": "sk-secret-test-key", "generate_voice": False})}
+        )
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+    assert jobs[job_id]["status"] == "pending"
+    assert jobs[job_id]["api_key"] == "sk-secret-test-key"
+
+    first_ws_reached_pipeline = threading.Event()
+    second_ws_checked = threading.Event()
+    first_ws_messages = []
+    first_ws_error = []
+
+    def mock_translate(*args, **kwargs):
+        first_ws_reached_pipeline.set()
+        assert second_ws_checked.wait(timeout=5.0), "Timeout waiting for second WS check"
+        from src.models import StringEntry
+        return [StringEntry(form_id="0001", text="Traducido con clave", is_dialog=False)]
+
+    create_openai_compatible_translator = MagicMock(return_value=MagicMock())
+    free_translator_callable = MagicMock()
+
+    def run_first_ws():
+        try:
+            with patch("api.create_openai_compatible_translator", create_openai_compatible_translator), \
+                 patch("api.free_translator_callable", free_translator_callable), \
+                 patch("api.translate_entries", side_effect=mock_translate):
+                with client.websocket_connect(f"/ws/progress/{job_id}") as ws1:
+                    while True:
+                        try:
+                            msg = ws1.receive_json()
+                            first_ws_messages.append(msg)
+                            if msg.get("status") in ["completed", "error"]:
+                                break
+                        except Exception:
+                            break
+        except Exception as e:
+            first_ws_error.append(e)
+
+    t1 = threading.Thread(target=run_first_ws)
+    t1.start()
+
+    try:
+        # Wait until ws1 has started the pipeline and reached translate_entries
+        assert first_ws_reached_pipeline.wait(timeout=5.0), "Timeout waiting for first WS to reach pipeline"
+
+        # At this moment, job is processing and api_key has been purged from memory
+        assert jobs[job_id]["status"] == "processing"
+        assert "api_key" not in jobs[job_id] or jobs[job_id]["api_key"] is None
+
+        # Connect second WebSocket concurrently
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws2:
+            msg2 = ws2.receive_json()
+            assert msg2["status"] == "error"
+            assert msg2["error_code"] == "JOB_ALREADY_PROCESSING"
+            assert msg2["error"] == "El trabajo ya se encuentra en procesamiento."
+            assert msg2["progress"] >= 0
+            assert msg2["job_id"] == job_id
+
+        # Signal first WS thread to resume and complete
+        second_ws_checked.set()
+        t1.join(timeout=5.0)
+        assert not t1.is_alive(), "First WS thread timed out"
+        assert not first_ws_error, f"First WS thread raised error: {first_ws_error}"
+
+        # First WS should have completed successfully
+        assert jobs[job_id]["status"] == "completed"
+        assert any(m.get("status") == "completed" for m in first_ws_messages)
+
+        # Assert mandatory API key usage counts
+        assert create_openai_compatible_translator.call_count == 1
+        assert free_translator_callable.call_count == 0
+
+        # Verify api_key argument passed to factory
+        called_args, _ = create_openai_compatible_translator.call_args
+        assert called_args[0] == "sk-secret-test-key"
+    finally:
+        second_ws_checked.set()
+        t1.join(timeout=2.0)
+
+
+def test_download_state_gate_nonexistent_job():
+    """GET /api/download/{job_id} for nonexistent job returns 404."""
+    res = client.get("/api/download/nonexistent-job-xyz")
+    assert res.status_code == 404
+    assert "Trabajo no encontrado" in res.json()["detail"]
+
+
+def test_download_state_gate_non_completed_job():
+    """GET /api/download/{job_id} for job in pending/processing/error status returns 409 Conflict."""
+    job_id = "test-job-download-pending"
+    jobs[job_id] = {"status": "pending"}
+    try:
+        res = client.get(f"/api/download/{job_id}")
+        assert res.status_code == 409
+        assert "no ha finalizado" in res.json()["detail"]
+
+        jobs[job_id]["status"] = "processing"
+        res_proc = client.get(f"/api/download/{job_id}")
+        assert res_proc.status_code == 409
+
+        jobs[job_id]["status"] = "error"
+        res_err = client.get(f"/api/download/{job_id}")
+        assert res_err.status_code == 409
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_download_state_gate_completed_missing_zip(tmp_path):
+    """GET /api/download/{job_id} for completed job with missing or non-file ZIP path returns 404."""
+    job_id = "test-job-download-missing-zip"
+    jobs[job_id] = {
+        "status": "completed",
+        "zip_path": str(tmp_path / "missing_bundle.zip"),
+    }
+    try:
+        res = client.get(f"/api/download/{job_id}")
+        assert res.status_code == 404
+        assert "ZIP no está listo" in res.json()["detail"]
+
+        # Also exercise the not is_file() branch when pointing to a directory
+        jobs[job_id]["zip_path"] = str(tmp_path)
+        res_dir = client.get(f"/api/download/{job_id}")
+        assert res_dir.status_code == 404
+        assert "ZIP no está listo" in res_dir.json()["detail"]
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_download_state_gate_completed_valid_zip(tmp_path):
+    """GET /api/download/{job_id} for completed job with valid ZIP returns 200 FileResponse."""
+    test_zip = tmp_path / "valid_bundle.zip"
+    with zipfile.ZipFile(test_zip, "w") as zf:
+        zf.writestr("test.txt", "dummy content")
+
+    job_id = "test-job-download-valid-zip"
+    jobs[job_id] = {
+        "status": "completed",
+        "zip_path": str(test_zip),
+    }
+    try:
+        res = client.get(f"/api/download/{job_id}")
+        assert res.status_code == 200
+        assert res.headers["content-type"] == "application/zip"
+        assert len(res.content) > 0
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_inject_state_gate_non_completed_job(tmp_path):
+    """POST /api/mo2/inject/{job_id} for job in pending/processing/error returns 409 Conflict."""
+    mo2_dir = tmp_path / "mods"
+    mo2_dir.mkdir()
+    (mo2_dir / "ModA").mkdir()
+
+    job_id = "test-job-inject-pending"
+    jobs[job_id] = {
+        "status": "pending",
+        "output_dir": str(tmp_path / "build"),
+    }
+    try:
+        res = client.post(f"/api/mo2/inject/{job_id}", json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "ModA"
+        })
+        assert res.status_code == 409
+        assert "no ha finalizado" in res.json()["detail"]
+
+        jobs[job_id]["status"] = "processing"
+        res_proc = client.post(f"/api/mo2/inject/{job_id}", json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "ModA"
+        })
+        assert res_proc.status_code == 409
+
+        jobs[job_id]["status"] = "error"
+        res_err = client.post(f"/api/mo2/inject/{job_id}", json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "ModA"
+        })
+        assert res_err.status_code == 409
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_inject_state_gate_completed_missing_build_dir(tmp_path):
+    """POST /api/mo2/inject/{job_id} for completed job with nonexistent build_dir returns 400."""
+    mo2_dir = tmp_path / "mods"
+    mo2_dir.mkdir()
+    (mo2_dir / "ModA").mkdir()
+
+    job_id = "test-job-inject-missing-build"
+    jobs[job_id] = {
+        "status": "completed",
+        "output_dir": str(tmp_path / "nonexistent_build_dir_xyz"),
+    }
+    try:
+        res = client.post(f"/api/mo2/inject/{job_id}", json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "ModA"
+        })
+        assert res.status_code == 400
+        assert "No hay archivos generados para inyectar" in res.json()["detail"]
+    finally:
+        jobs.pop(job_id, None)
