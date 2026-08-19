@@ -1055,10 +1055,3 @@ def test_inject_state_gate_completed_missing_build_dir(tmp_path):
         assert "No hay archivos generados para inyectar" in res.json()["detail"]
     finally:
         jobs.pop(job_id, None)
-
-
-
-
-
-
-
