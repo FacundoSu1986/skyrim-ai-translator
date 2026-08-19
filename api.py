@@ -642,8 +642,11 @@ async def download_result(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Trabajo no encontrado")
 
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="El trabajo no ha finalizado")
+
     zip_path = Path(job.get("zip_path", ""))
-    if not zip_path.exists():
+    if not zip_path.exists() or not zip_path.is_file():
         raise HTTPException(status_code=404, detail="El archivo ZIP no está listo")
 
     return FileResponse(

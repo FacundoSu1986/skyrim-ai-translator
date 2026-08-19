@@ -870,6 +870,69 @@ def test_websocket_real_overlapping_connection_with_api_key_regression(tmp_path)
         t1.join(timeout=2.0)
 
 
+def test_download_state_gate_nonexistent_job():
+    """GET /api/download/{job_id} for nonexistent job returns 404."""
+    res = client.get("/api/download/nonexistent-job-xyz")
+    assert res.status_code == 404
+    assert "Trabajo no encontrado" in res.json()["detail"]
+
+
+def test_download_state_gate_non_completed_job():
+    """GET /api/download/{job_id} for job in pending/processing/error status returns 409 Conflict."""
+    job_id = "test-job-download-pending"
+    jobs[job_id] = {"status": "pending"}
+    try:
+        res = client.get(f"/api/download/{job_id}")
+        assert res.status_code == 409
+        assert "no ha finalizado" in res.json()["detail"]
+
+        jobs[job_id]["status"] = "processing"
+        res_proc = client.get(f"/api/download/{job_id}")
+        assert res_proc.status_code == 409
+
+        jobs[job_id]["status"] = "error"
+        res_err = client.get(f"/api/download/{job_id}")
+        assert res_err.status_code == 409
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_download_state_gate_completed_missing_zip():
+    """GET /api/download/{job_id} for completed job with missing ZIP file returns 404."""
+    job_id = "test-job-download-missing-zip"
+    jobs[job_id] = {
+        "status": "completed",
+        "zip_path": "Z:\\nonexistent\\path\\bundle.zip",
+    }
+    try:
+        res = client.get(f"/api/download/{job_id}")
+        assert res.status_code == 404
+        assert "ZIP no está listo" in res.json()["detail"]
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_download_state_gate_completed_valid_zip(tmp_path):
+    """GET /api/download/{job_id} for completed job with valid ZIP returns 200 FileResponse."""
+    test_zip = tmp_path / "valid_bundle.zip"
+    with zipfile.ZipFile(test_zip, "w") as zf:
+        zf.writestr("test.txt", "dummy content")
+
+    job_id = "test-job-download-valid-zip"
+    jobs[job_id] = {
+        "status": "completed",
+        "zip_path": str(test_zip),
+    }
+    try:
+        res = client.get(f"/api/download/{job_id}")
+        assert res.status_code == 200
+        assert res.headers["content-type"] == "application/zip"
+        assert len(res.content) > 0
+    finally:
+        jobs.pop(job_id, None)
+
+
+
 
 
 
