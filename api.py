@@ -663,6 +663,9 @@ async def inject_to_mo2(job_id: str, req: InjectRequest):
     if not job:
         raise HTTPException(status_code=404, detail="Trabajo no encontrado")
 
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="El trabajo no ha finalizado")
+
     build_dir = Path(job.get("output_dir", ""))
     if not build_dir.exists():
         raise HTTPException(status_code=400, detail="No hay archivos generados para inyectar")

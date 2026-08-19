@@ -103,6 +103,7 @@ def test_mo2_start_and_inject(tmp_path):
     
     # Simulate job build output
     job = jobs[job_id]
+    job["status"] = "completed"
     build_dir = Path(job["output_dir"])
     build_dir.mkdir(parents=True, exist_ok=True)
     (build_dir / "test_file.txt").write_text("Hello Skyrim")
@@ -930,6 +931,65 @@ def test_download_state_gate_completed_valid_zip(tmp_path):
         assert len(res.content) > 0
     finally:
         jobs.pop(job_id, None)
+
+
+def test_inject_state_gate_non_completed_job(tmp_path):
+    """POST /api/mo2/inject/{job_id} for job in pending/processing/error returns 409 Conflict."""
+    mo2_dir = tmp_path / "mods"
+    mo2_dir.mkdir()
+    (mo2_dir / "ModA").mkdir()
+
+    job_id = "test-job-inject-pending"
+    jobs[job_id] = {
+        "status": "pending",
+        "output_dir": str(tmp_path / "build"),
+    }
+    try:
+        res = client.post(f"/api/mo2/inject/{job_id}", json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "ModA"
+        })
+        assert res.status_code == 409
+        assert "no ha finalizado" in res.json()["detail"]
+
+        jobs[job_id]["status"] = "processing"
+        res_proc = client.post(f"/api/mo2/inject/{job_id}", json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "ModA"
+        })
+        assert res_proc.status_code == 409
+
+        jobs[job_id]["status"] = "error"
+        res_err = client.post(f"/api/mo2/inject/{job_id}", json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "ModA"
+        })
+        assert res_err.status_code == 409
+    finally:
+        jobs.pop(job_id, None)
+
+
+def test_inject_state_gate_completed_missing_build_dir(tmp_path):
+    """POST /api/mo2/inject/{job_id} for completed job with nonexistent build_dir returns 400."""
+    mo2_dir = tmp_path / "mods"
+    mo2_dir.mkdir()
+    (mo2_dir / "ModA").mkdir()
+
+    job_id = "test-job-inject-missing-build"
+    jobs[job_id] = {
+        "status": "completed",
+        "output_dir": str(tmp_path / "nonexistent_build_dir_xyz"),
+    }
+    try:
+        res = client.post(f"/api/mo2/inject/{job_id}", json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "ModA"
+        })
+        assert res.status_code == 400
+        assert "No hay archivos generados para inyectar" in res.json()["detail"]
+    finally:
+        jobs.pop(job_id, None)
+
 
 
 
