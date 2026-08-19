@@ -634,7 +634,12 @@ def test_websocket_job_already_processing_rejects_concurrent_connection():
 
 
 def test_websocket_reconnect_completed_job():
-    """A WebSocket connecting to a 'completed' job receives download_url, has_mo2, and progress 100."""
+    """A WebSocket connecting to a 'completed' job receives download_url, has_mo2, progress 100, and does NOT rerun."""
+    from unittest.mock import patch, MagicMock
+    mock_translate = MagicMock()
+    mock_llm = MagicMock()
+    mock_free = MagicMock()
+
     job_id = "test-job-completed-456"
     jobs[job_id] = {
         "status": "completed",
@@ -643,19 +648,31 @@ def test_websocket_reconnect_completed_job():
         "mod_name": "CoolMod",
     }
     try:
-        with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
-            msg = ws.receive_json()
-            assert msg["status"] == "completed"
-            assert msg["progress"] == 100
-            assert msg["download_url"] == f"/api/download/{job_id}"
-            assert msg["job_id"] == job_id
-            assert msg["has_mo2"] is True
+        with patch("api.translate_entries", mock_translate), \
+             patch("api.create_openai_compatible_translator", mock_llm), \
+             patch("api.free_translator_callable", mock_free):
+            with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+                msg = ws.receive_json()
+                assert msg["status"] == "completed"
+                assert msg["progress"] == 100
+                assert msg["download_url"] == f"/api/download/{job_id}"
+                assert msg["job_id"] == job_id
+                assert msg["has_mo2"] is True
+
+        assert mock_translate.call_count == 0
+        assert mock_llm.call_count == 0
+        assert mock_free.call_count == 0
     finally:
         jobs.pop(job_id, None)
 
 
 def test_websocket_reconnect_error_job():
-    """A WebSocket connecting to an 'error' job receives the error, error_code, and progress 100."""
+    """A WebSocket connecting to an 'error' job receives error fields, progress 100, and does NOT rerun."""
+    from unittest.mock import patch, MagicMock
+    mock_translate = MagicMock()
+    mock_llm = MagicMock()
+    mock_free = MagicMock()
+
     job_id = "test-job-error-789"
     jobs[job_id] = {
         "status": "error",
@@ -664,13 +681,20 @@ def test_websocket_reconnect_error_job():
         "progress": 100,
     }
     try:
-        with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
-            msg = ws.receive_json()
-            assert msg["status"] == "error"
-            assert msg["error_code"] == "NO_TRANSLATABLE_CONTENT"
-            assert msg["error"] == "No hay contenido traducible."
-            assert msg["progress"] == 100
-            assert msg["job_id"] == job_id
+        with patch("api.translate_entries", mock_translate), \
+             patch("api.create_openai_compatible_translator", mock_llm), \
+             patch("api.free_translator_callable", mock_free):
+            with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+                msg = ws.receive_json()
+                assert msg["status"] == "error"
+                assert msg["error_code"] == "NO_TRANSLATABLE_CONTENT"
+                assert msg["error"] == "No hay contenido traducible."
+                assert msg["progress"] == 100
+                assert msg["job_id"] == job_id
+
+        assert mock_translate.call_count == 0
+        assert mock_llm.call_count == 0
+        assert mock_free.call_count == 0
     finally:
         jobs.pop(job_id, None)
 
