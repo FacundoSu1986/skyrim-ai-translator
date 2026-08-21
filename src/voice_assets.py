@@ -25,7 +25,7 @@ def _validate_path_component(comp: str, field_name: str) -> None:
     """
     if comp is None or not isinstance(comp, str):
         raise VoiceAssetMetadataError(f"{field_name} must be a string, got {type(comp).__name__}")
-    
+
     cleaned = comp.strip()
     if not cleaned:
         raise VoiceAssetMetadataError(f"{field_name} cannot be empty or whitespace only")
