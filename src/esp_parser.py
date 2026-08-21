@@ -724,7 +724,7 @@ def parse_esp_file(
     # occurrence; the DSD layer fails fast on any unresolved indexed entry.
     seen_keys: set[tuple[str, bytes, Optional[int]]] = set()
 
-    for tag, flags, form_id_val, form_id_hex, body, parent_dial_formid in _iter_records(data):
+    for tag, _flags, form_id_val, form_id_hex, body, parent_dial_formid in _iter_records(data):
         if tag not in INTERESTING_RECORDS:
             continue
 

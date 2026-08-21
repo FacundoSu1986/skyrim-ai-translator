@@ -1377,9 +1377,10 @@ def test_tes5_type_7_group_master_dial_reference(tmp_path):
 
 def test_tes5_type_7_group_interleaved_unrelated_records(tmp_path):
     """
-    T-GRUP-5: Interleaves unrelated records (NPC_, BOOK, WEAP) and unrelated GRUPs between
-    DIAL and the Topic Children group, proving that INFO identity is strictly derived from the
-    type-7 group label rather than record proximity or 'last seen DIAL'.
+    T-GRUP-5: Interleaves unrelated records (NPC_, BOOK) and an
+    unrelated DIAL before the Topic Children group, proving that
+    INFO identity comes from the type-7 group label rather than
+    record proximity or the last DIAL seen.
     """
     esp_path = tmp_path / "InterleavedTest.esp"
     qust_real = make_record(b"QUST", 0x00001000, make_subrecord(b"EDID", b"RealQuest\x00"))

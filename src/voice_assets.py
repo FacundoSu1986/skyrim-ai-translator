@@ -9,21 +9,29 @@ Pure logic only:
 
 import struct
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 from src.models import StringEntry
 
 
 class VoiceAssetMetadataError(ValueError):
     """Raised when required dialogue metadata is missing, unresolved, or invalid."""
-    pass
 
 
 _WINDOWS_RESERVED_NAMES = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
+    "COM¹", "COM²", "COM³",
+    "LPT¹", "LPT²", "LPT³",
 }
 _WINDOWS_FORBIDDEN_CHARS = set('<>:"/\\|?*')
+
+
+_WINDOWS_MAX_COMPONENT_UNITS = 255
+
+
+def _windows_utf16_units(value: str) -> int:
+    return len(value.encode("utf-16-le")) // 2
 
 
 def _validate_path_component(comp: str, field_name: str) -> None:
@@ -55,10 +63,13 @@ def _validate_path_component(comp: str, field_name: str) -> None:
                 f"{field_name} contains forbidden Windows character '{c}': {comp!r}"
             )
 
-    if comp == "." or comp == ".." or ".." in comp:
+    if comp in {".", ".."}:
         raise VoiceAssetMetadataError(
             f"{field_name} contains relative directory traversal '..': {comp!r}"
         )
+
+    if _windows_utf16_units(comp) > _WINDOWS_MAX_COMPONENT_UNITS:
+        raise VoiceAssetMetadataError(f"{field_name} exceeds Windows component length limit")
 
     stem = comp.split(".")[0].upper()
     if stem in _WINDOWS_RESERVED_NAMES:
@@ -95,16 +106,6 @@ def build_voice_basename(
     if topic_edid is None or not isinstance(topic_edid, str):
         raise VoiceAssetMetadataError(f"topic_edid must be a string (or empty string ''), got {type(topic_edid).__name__}")
 
-    q = quest_edid
-    d = topic_edid
-
-    if len(q) + len(d) > 25:
-        if len(q) > 10:
-            q = q[:10]
-            d = d[:15]
-        else:
-            d = d[:25 - len(q)]
-
     if not isinstance(local_object_id, int) or local_object_id < 0 or local_object_id > 0xFFFFFF:
         raise VoiceAssetMetadataError(
             f"local_object_id must be a 24-bit unsigned integer (0..0xFFFFFF), got {local_object_id}"
@@ -115,6 +116,16 @@ def build_voice_basename(
         raise VoiceAssetMetadataError(
             f"response_number must be an 8-bit unsigned integer (0..255), got {response_number}"
         )
+
+    q = quest_edid
+    d = topic_edid
+
+    if len(q) + len(d) > 25:
+        if len(q) > 10:
+            q = q[:10]
+            d = d[:15]
+        else:
+            d = d[:25 - len(q)]
 
     basename = f"{q}_{d}_{fid8}_{response_number}"
     _validate_path_component(basename, "basename")
@@ -144,7 +155,10 @@ def build_voice_relative_path(
     ):
         raise VoiceAssetMetadataError(f"invalid extension: {extension!r}")
 
-    return Path("Sound") / "Voice" / defining_plugin / voice_type / f"{basename}{extension}"
+    filename = f"{basename}{extension}"
+    _validate_path_component(filename, "filename")
+
+    return Path("Sound") / "Voice" / defining_plugin / voice_type / filename
 
 
 def validate_voice_asset_entry(entry: StringEntry) -> None:
@@ -197,7 +211,7 @@ def pack_fuz(lip_bytes: bytes, xwm_bytes: bytes) -> bytes:
     return header + bytes(lip_bytes) + bytes(xwm_bytes)
 
 
-def unpack_fuz(fuz_bytes: bytes) -> Tuple[bytes, bytes]:
+def unpack_fuz(fuz_bytes: bytes) -> tuple[bytes, bytes]:
     """
     Unpacks a Skyrim FUZ container into its constituent LIP and audio byte streams.
     Returns (lip_bytes, audio_bytes).

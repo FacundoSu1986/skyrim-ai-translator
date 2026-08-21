@@ -18,11 +18,17 @@
 ```text
 Plugin Binary (.esp / .esm)
       ↓
-Pass 1 Indexing: QUST(EDID), DIAL(EDID, QNAM), VTYP(EDID), NPC_(ANAM, VTCK, TPLT)
+Pass 1 Indexing: QUST(EDID), DIAL(EDID, QNAM), VTYP(EDID), NPC_(VTCK, TPLT)
       ↓
 Pass 2 Subrecord & Hierarchy Traversal:
    INFO record inside Topic Children GRUP (grp_type == 7, label == DIAL FormID)
-   ANAM -> NPC_ -> VTCK/TPLT -> VTYP.EDID -> voice_type
+   INFO.ANAM
+       ↓
+   NPC_
+       ↓
+   VTCK / TPLT
+       ↓
+   VTYP.EDID -> voice_type
    DIAL FormID -> DIAL.EDID -> topic_edid (or "" if empty)
    DIAL.QNAM / INFO.QSTI -> QUST.EDID -> quest_edid
    TRDT byte 12 -> string_index (raw response number)

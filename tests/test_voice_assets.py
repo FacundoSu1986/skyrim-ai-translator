@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from src.models import StringEntry
 from src.voice_assets import (
+    _validate_path_component,
     VoiceAssetMetadataError,
     build_voice_basename,
     build_voice_relative_path,
@@ -148,6 +149,12 @@ def test_build_voice_relative_path_custom_plugin_and_wav():
     "PRN",
     "COM1",
     "com9",
+    "COM¹",
+    "com².txt",
+    "COM³.foo.bar",
+    "LPT¹",
+    "lpt².esp",
+    "LPT³.txt",
     "LPT1",
     "LPT9",
     "BadPlugin.esp ",
@@ -196,6 +203,9 @@ def test_path_safety_rejects_malicious_voice_type(bad_voice_type):
 
 @pytest.mark.parametrize("valid_plugin,valid_voice_type", [
     ("Skyrim.esm", "MaleNord"),
+    ("My..Mod.esp", "MaleNord"),
+    ("COM10", "MaleNord"),
+    ("LPT10", "MaleNord"),
     ("Dawnguard.esm", "FemaleYoungEager"),
     ("Dragonborn.esm", "MaleEvenToned"),
     ("HearthFires.esm", "FemaleChild"),
@@ -337,3 +347,33 @@ def test_pack_fuz_rejects_empty_payloads():
 def test_unpack_fuz_rejects_malformed_container(corrupted_bytes):
     with pytest.raises(VoiceAssetMetadataError):
         unpack_fuz(corrupted_bytes)
+
+def test_windows_component_length():
+    # A. 255 ASCII characters as a standalone validated component -> accepted
+    valid_255 = "a" * 255
+    _validate_path_component(valid_255, "plugin")
+    
+    # B. 256 ASCII characters -> rejected
+    invalid_256 = "a" * 256
+    with pytest.raises(VoiceAssetMetadataError, match="plugin exceeds Windows component length limit"):
+        _validate_path_component(invalid_256, "plugin")
+        
+    # C. Unicode supplementary characters whose UTF-16 representation exceeds 255 code units -> rejected
+    # 𐍈 is U+10348 (GOTHIC LETTER HWAIR), takes 2 UTF-16 code units.
+    # 128 of them takes 256 code units, even though it's 128 characters.
+    invalid_utf16_256 = "\U00010348" * 128
+    with pytest.raises(VoiceAssetMetadataError, match="plugin exceeds Windows component length limit"):
+        _validate_path_component(invalid_utf16_256, "plugin")
+
+    # D. Final filename exactly at the limit after adding extension -> accepted.
+    # 251 chars + ".fuz" (4 chars) = 255 chars
+    basename_251 = "a" * 251
+    path = build_voice_relative_path("Skyrim.esm", "MaleNord", basename_251)
+    assert path.name == f"{basename_251}.fuz"
+
+    # E. A basename that fits alone but basename + ".fuz" exceeds the component limit -> rejected.
+    # 252 chars + ".fuz" (4 chars) = 256 chars
+    basename_252 = "a" * 252
+    _validate_path_component(basename_252, "basename") # should not raise
+    with pytest.raises(VoiceAssetMetadataError, match="filename exceeds Windows component length limit"):
+        build_voice_relative_path("Skyrim.esm", "MaleNord", basename_252)
