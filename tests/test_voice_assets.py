@@ -377,3 +377,7 @@ def test_windows_component_length():
     _validate_path_component(basename_252, "basename") # should not raise
     with pytest.raises(VoiceAssetMetadataError, match="filename exceeds Windows component length limit"):
         build_voice_relative_path("Skyrim.esm", "MaleNord", basename_252)
+
+def test_windows_component_invalid_surrogate():
+    with pytest.raises(VoiceAssetMetadataError, match="plugin contains invalid Unicode surrogate data"):
+        _validate_path_component("\ud800", "plugin")

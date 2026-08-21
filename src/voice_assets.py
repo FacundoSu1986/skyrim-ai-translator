@@ -68,7 +68,14 @@ def _validate_path_component(comp: str, field_name: str) -> None:
             f"{field_name} contains relative directory traversal '..': {comp!r}"
         )
 
-    if _windows_utf16_units(comp) > _WINDOWS_MAX_COMPONENT_UNITS:
+    try:
+        component_units = _windows_utf16_units(comp)
+    except UnicodeEncodeError as exc:
+        raise VoiceAssetMetadataError(
+            f"{field_name} contains invalid Unicode surrogate data"
+        ) from exc
+
+    if component_units > _WINDOWS_MAX_COMPONENT_UNITS:
         raise VoiceAssetMetadataError(f"{field_name} exceeds Windows component length limit")
 
     stem = comp.split(".")[0].upper()
