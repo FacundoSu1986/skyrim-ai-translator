@@ -15,4 +15,6 @@ class StringEntry:
     subrecord_type: Optional[str] = None
     string_index: Optional[int] = None
     editor_id: Optional[str] = None
+    quest_edid: Optional[str] = None
+    topic_edid: Optional[str] = None
 

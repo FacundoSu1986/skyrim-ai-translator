@@ -2,7 +2,7 @@ import struct
 import zlib
 import logging
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 from src.models import StringEntry
@@ -82,15 +82,29 @@ def _decode_string(raw_bytes: bytes) -> str:
             return cleaned.decode("latin1", errors="replace")
 
 
-def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, int, str, bytes]]:
-    """Yields (record_type, flags, form_id_val, form_id_hex, body) for every record, entering GRUPs."""
+def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, int, str, bytes, Optional[int]]]:
+    """
+    Yields (record_type, flags, form_id_val, form_id_hex, body, parent_dial_formid)
+    for every record, entering GRUPs and tracking parent Topic Children GRUPs (grp_type == 7 in TES5).
+    """
     offset = 0
     total_len = len(data)
+    # Stack of enclosing GRUPs: list of (end_offset, grp_type, label_formid)
+    grup_stack: list[tuple[int, int, int]] = []
 
     while offset + RECORD_HEADER_SIZE <= total_len:
+        # Pop expired GRUPs
+        while grup_stack and offset >= grup_stack[-1][0]:
+            grup_stack.pop()
+
         tag = data[offset:offset+4]
 
         if tag == b"GRUP":
+            rec_size = struct.unpack("<I", data[offset+4:offset+8])[0]
+            label_val = struct.unpack("<I", data[offset+8:offset+12])[0]
+            grp_type = struct.unpack("<i", data[offset+12:offset+16])[0]
+            grup_end = offset + rec_size
+            grup_stack.append((grup_end, grp_type, label_val))
             offset += RECORD_HEADER_SIZE
             continue
 
@@ -111,7 +125,14 @@ def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, int, str, bytes]]:
             else:
                 body = b""
 
-        yield tag, rec_flags, form_id_val, form_id_hex, body
+        # Find enclosing Topic Children GRUP (grp_type == 7 in TES5)
+        parent_dial_formid: Optional[int] = None
+        for _g_end, g_type, g_label in reversed(grup_stack):
+            if g_type == 7:
+                parent_dial_formid = g_label
+                break
+
+        yield tag, rec_flags, form_id_val, form_id_hex, body, parent_dial_formid
         offset += RECORD_HEADER_SIZE + rec_size
 
 
@@ -211,13 +232,16 @@ def _resolve_record_key(
 
 @dataclass
 class MasterIndexData:
-    """In-memory read-only index of master records required for VoiceType, Template, and Actor resolution."""
+    """In-memory read-only index of master records required for VoiceType, Template, Actor, Quest, and Dialogue resolution."""
     plugin_name: str
     masters: list[str]
     npc_to_vtck: dict[RecordKey, int]
     npc_to_tplt: dict[RecordKey, int]
     npc_to_name: dict[RecordKey, str]
     vtyp_to_edid: dict[RecordKey, str]
+    qust_to_edid: dict[RecordKey, str] = field(default_factory=dict)
+    dial_to_edid: dict[RecordKey, str] = field(default_factory=dict)
+    dial_to_qnam: dict[RecordKey, int] = field(default_factory=dict)
 
 
 class MasterResolver:
@@ -298,7 +322,7 @@ class MasterResolver:
         # Extract declared masters and localized status in the master's own TES4 header
         masters: list[str] = []
         is_localized = False
-        for tag, flags, _form_id_val, _form_id_hex, body in _iter_records(data):
+        for tag, flags, _form_id_val, _form_id_hex, body, _parent_dial in _iter_records(data):
             if tag == b"TES4":
                 masters = _extract_masters_from_tes4(body)
                 if flags & FLAG_LOCALIZED:
@@ -310,8 +334,11 @@ class MasterResolver:
         npc_to_tplt: dict[RecordKey, int] = {}
         npc_to_name: dict[RecordKey, str] = {}
         vtyp_to_edid: dict[RecordKey, str] = {}
+        qust_to_edid: dict[RecordKey, str] = {}
+        dial_to_edid: dict[RecordKey, str] = {}
+        dial_to_qnam: dict[RecordKey, int] = {}
 
-        for tag, _flags, form_id_val, _form_id_hex, body in _iter_records(data):
+        for tag, _flags, form_id_val, _form_id_hex, body, _parent_dial in _iter_records(data):
             rec_key = _resolve_record_key(form_id_val, plugin_name, masters)
             if rec_key is None:
                 continue
@@ -320,6 +347,23 @@ class MasterResolver:
                 for s_type, payload in _read_subrecords(body):
                     if s_type == b"EDID" and payload:
                         vtyp_to_edid[rec_key] = _decode_string(payload).strip()
+            elif tag == b"QUST":
+                for s_type, payload in _read_subrecords(body):
+                    if s_type == b"EDID" and payload:
+                        qust_to_edid[rec_key] = _decode_string(payload).strip()
+                        break
+            elif tag == b"DIAL":
+                d_edid: Optional[str] = None
+                d_qnam: Optional[int] = None
+                for s_type, payload in _read_subrecords(body):
+                    if s_type == b"EDID":
+                        d_edid = _decode_string(payload).strip()
+                    elif s_type == b"QNAM" and len(payload) >= 4:
+                        d_qnam = int.from_bytes(payload[:4], "little")
+                if d_edid is not None:
+                    dial_to_edid[rec_key] = d_edid
+                if d_qnam is not None:
+                    dial_to_qnam[rec_key] = d_qnam
             elif tag == b"NPC_":
                 edid = None
                 full_name = None
@@ -352,6 +396,9 @@ class MasterResolver:
             npc_to_tplt=npc_to_tplt,
             npc_to_name=npc_to_name,
             vtyp_to_edid=vtyp_to_edid,
+            qust_to_edid=qust_to_edid,
+            dial_to_edid=dial_to_edid,
+            dial_to_qnam=dial_to_qnam,
         )
         self._cache[resolved_path] = index_data
         return index_data
@@ -400,6 +447,63 @@ def _find_npc_data(
         )
 
     return None, None, None, npc_key.plugin, []
+
+
+def _find_dial_data(
+    dial_key: RecordKey,
+    local_plugin_name: str,
+    local_masters: list[str],
+    local_dial_to_edid: dict[RecordKey, str],
+    local_dial_to_qnam: dict[RecordKey, int],
+    master_resolver: MasterResolver,
+    origin_dir: Path,
+) -> tuple[Optional[str], Optional[int], str, list[str]]:
+    """
+    Retrieves topic_edid and qnam FormID for a given DIAL RecordKey.
+    Returns (topic_edid, qnam_raw_formid, owning_plugin, owning_masters).
+    """
+    if (
+        dial_key in local_dial_to_edid
+        or dial_key in local_dial_to_qnam
+        or dial_key.plugin == _norm_plugin(local_plugin_name)
+    ):
+        return (
+            local_dial_to_edid.get(dial_key),
+            local_dial_to_qnam.get(dial_key),
+            local_plugin_name,
+            local_masters,
+        )
+
+    origin_data = master_resolver.get_or_load_master(dial_key.plugin, origin_dir)
+    if origin_data:
+        return (
+            origin_data.dial_to_edid.get(dial_key),
+            origin_data.dial_to_qnam.get(dial_key),
+            origin_data.plugin_name,
+            origin_data.masters,
+        )
+
+    return None, None, dial_key.plugin, []
+
+
+def _find_quest_edid(
+    qust_key: RecordKey,
+    local_plugin_name: str,
+    local_qust_to_edid: dict[RecordKey, str],
+    master_resolver: MasterResolver,
+    origin_dir: Path,
+) -> Optional[str]:
+    """
+    Retrieves quest_edid for a given QUST RecordKey.
+    """
+    if qust_key in local_qust_to_edid or qust_key.plugin == _norm_plugin(local_plugin_name):
+        return local_qust_to_edid.get(qust_key)
+
+    origin_data = master_resolver.get_or_load_master(qust_key.plugin, origin_dir)
+    if origin_data:
+        return origin_data.qust_to_edid.get(qust_key)
+
+    return None
 
 
 def _resolve_voice_type_for_npc(
@@ -521,7 +625,7 @@ def parse_esp_file(
     # Extract declared masters and localized status in order from TES4 header
     local_masters: list[str] = []
     is_localized = False
-    for tag, flags, _form_id_val, _form_id_hex, body in _iter_records(data):
+    for tag, flags, _form_id_val, _form_id_hex, body, _parent_dial in _iter_records(data):
         if tag == b"TES4":
             local_masters = _extract_masters_from_tes4(body)
             if flags & FLAG_LOCALIZED:
@@ -543,8 +647,11 @@ def parse_esp_file(
     local_npc_to_tplt: dict[RecordKey, int] = {}
     local_npc_to_name: dict[RecordKey, str] = {}
     local_vtyp_to_edid: dict[RecordKey, str] = {}
+    local_qust_to_edid: dict[RecordKey, str] = {}
+    local_dial_to_edid: dict[RecordKey, str] = {}
+    local_dial_to_qnam: dict[RecordKey, int] = {}
 
-    for tag, _flags, form_id_val, _form_id_hex, body in _iter_records(data):
+    for tag, _flags, form_id_val, _form_id_hex, body, _parent_dial in _iter_records(data):
         rec_key = _resolve_record_key(
             form_id_val, plugin_name, local_masters,
             warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
@@ -556,6 +663,23 @@ def parse_esp_file(
             for s_type, payload in _read_subrecords(body):
                 if s_type == b"EDID" and payload:
                     local_vtyp_to_edid[rec_key] = _decode_string(payload).strip()
+        elif tag == b"QUST":
+            for s_type, payload in _read_subrecords(body):
+                if s_type == b"EDID" and payload:
+                    local_qust_to_edid[rec_key] = _decode_string(payload).strip()
+                    break
+        elif tag == b"DIAL":
+            d_edid: Optional[str] = None
+            d_qnam: Optional[int] = None
+            for s_type, payload in _read_subrecords(body):
+                if s_type == b"EDID":
+                    d_edid = _decode_string(payload).strip()
+                elif s_type == b"QNAM" and len(payload) >= 4:
+                    d_qnam = int.from_bytes(payload[:4], "little")
+            if d_edid is not None:
+                local_dial_to_edid[rec_key] = d_edid
+            if d_qnam is not None:
+                local_dial_to_qnam[rec_key] = d_qnam
         elif tag == b"NPC_":
             edid = None
             full_name = None
@@ -600,7 +724,7 @@ def parse_esp_file(
     # occurrence; the DSD layer fails fast on any unresolved indexed entry.
     seen_keys: set[tuple[str, bytes, Optional[int]]] = set()
 
-    for tag, flags, form_id_val, form_id_hex, body in _iter_records(data):
+    for tag, _flags, form_id_val, form_id_hex, body, parent_dial_formid in _iter_records(data):
         if tag not in INTERESTING_RECORDS:
             continue
 
@@ -617,12 +741,63 @@ def parse_esp_file(
         record_type = tag.decode("ascii", errors="ignore")
         editor_id = _extract_record_editor_id(body)
         speaker_formid: Optional[int] = None
+        info_qsti_formid: Optional[int] = None
+        quest_edid: Optional[str] = None
+        topic_edid: Optional[str] = None
 
         if tag == b"INFO":
             for s_type, payload in _read_subrecords(body):
                 if s_type == b"ANAM" and len(payload) >= 4:
                     speaker_formid = int.from_bytes(payload[:4], "little")
-                    break
+                elif s_type == b"QSTI" and len(payload) >= 4:
+                    info_qsti_formid = int.from_bytes(payload[:4], "little")
+
+            if parent_dial_formid is not None:
+                dial_key = _resolve_record_key(
+                    parent_dial_formid, plugin_name, local_masters,
+                    warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+                )
+                if dial_key is not None:
+                    d_edid, qnam_raw, dial_owning_plugin, dial_owning_masters = _find_dial_data(
+                        dial_key,
+                        plugin_name,
+                        local_masters,
+                        local_dial_to_edid,
+                        local_dial_to_qnam,
+                        master_resolver,
+                        path.parent,
+                    )
+                    topic_edid = d_edid
+                    target_qust_formid = qnam_raw if qnam_raw is not None else info_qsti_formid
+                    qust_owning_plugin = dial_owning_plugin if qnam_raw is not None else plugin_name
+                    qust_owning_masters = dial_owning_masters if qnam_raw is not None else local_masters
+
+                    if target_qust_formid is not None:
+                        qust_key = _resolve_record_key(
+                            target_qust_formid, qust_owning_plugin, qust_owning_masters,
+                            warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+                        )
+                        if qust_key is not None:
+                            quest_edid = _find_quest_edid(
+                                qust_key,
+                                plugin_name,
+                                local_qust_to_edid,
+                                master_resolver,
+                                path.parent,
+                            )
+            elif info_qsti_formid is not None:
+                qust_key = _resolve_record_key(
+                    info_qsti_formid, plugin_name, local_masters,
+                    warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+                )
+                if qust_key is not None:
+                    quest_edid = _find_quest_edid(
+                        qust_key,
+                        plugin_name,
+                        local_qust_to_edid,
+                        master_resolver,
+                        path.parent,
+                    )
 
         actor_name: Optional[str] = None
         voice_type: Optional[str] = None
@@ -748,6 +923,8 @@ def parse_esp_file(
                     subrecord_type=s_type.decode("ascii", errors="ignore"),
                     string_index=string_index,
                     editor_id=editor_id,
+                    quest_edid=quest_edid if is_dialog else None,
+                    topic_edid=topic_edid if is_dialog else None,
                 )
             )
 
