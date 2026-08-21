@@ -15,7 +15,7 @@
 
 ## 2. Deterministic Transformation Pipeline
 
-```
+```text
 Plugin Binary (.esp / .esm)
       ↓
 Pass 1 Indexing: QUST(EDID), DIAL(EDID, QNAM), VTYP(EDID), NPC_(ANAM, VTCK, TPLT)
