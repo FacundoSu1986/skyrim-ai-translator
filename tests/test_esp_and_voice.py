@@ -16,9 +16,9 @@ def make_record(rec_type: bytes, form_id: int, body: bytes, flags: int = 0) -> b
     return rec_type + struct.pack("<IIIIHH", len(body), flags, form_id, 0, 44, 0) + body
 
 
-def make_grup(label: bytes, records: bytes) -> bytes:
+def make_grup(label: bytes, records: bytes, grp_type: int = 0) -> bytes:
     """Helper to wrap records inside a Skyrim GRUP."""
-    return b"GRUP" + struct.pack("<I4sIII", 24 + len(records), label, 0, 0, 0) + records
+    return b"GRUP" + struct.pack("<I4siII", 24 + len(records), label, grp_type, 0, 0) + records
 
 
 def make_tes4_header(masters: list[str] = (), flags: int = 0) -> bytes:
@@ -975,3 +975,235 @@ def test_esp_parser_isolated_job_skyrim_data_resolution(tmp_path):
     dialog = next(e for e in entries if e.is_dialog)
     assert dialog.actor == "Jarl Balgruuf"
     assert dialog.voice_type == "MaleCommander"
+
+
+def test_esp_parser_dialogue_hierarchy_t1_basic(tmp_path):
+    """
+    T1: QUST + DIAL + INFO in single plugin.
+    Verifies that INFO StringEntry receives correct quest_edid and topic_edid.
+    """
+    esp_path = tmp_path / "TG00Quest.esp"
+    qust_rec = make_record(b"QUST", 0x00001000, make_subrecord(b"EDID", b"TG00\x00"))
+    dial_rec = make_record(
+        b"DIAL",
+        0x00002000,
+        make_subrecord(b"EDID", b"TG00Brynjolf\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+    )
+    info_body = (
+        make_subrecord(b"TRDT", bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0])) +
+        make_subrecord(b"NAM1", b"Never done an honest day's work, eh?\x00")
+    )
+    info_rec = make_record(b"INFO", 0x000136C9, info_body)
+    topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=5)
+
+    esp_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust_rec) +
+        make_grup(b"DIAL", dial_rec) +
+        topic_grup
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialog = next(e for e in entries if e.is_dialog)
+    assert dialog.quest_edid == "TG00"
+    assert dialog.topic_edid == "TG00Brynjolf"
+    assert dialog.defining_plugin == "TG00Quest.esp"
+    assert dialog.local_object_id == 0x0136C9
+    assert dialog.string_index == 1
+
+
+def test_esp_parser_dialogue_hierarchy_t2_one_quest_two_topics(tmp_path):
+    """
+    T2: One QUST with two DIAL records.
+    Verifies that INFO records under each topic map to their respective topic_edid and shared quest_edid.
+    """
+    esp_path = tmp_path / "MultiTopic.esp"
+    qust_rec = make_record(b"QUST", 0x00001000, make_subrecord(b"EDID", b"MQ101\x00"))
+    dial_a = make_record(
+        b"DIAL",
+        0x00002001,
+        make_subrecord(b"EDID", b"MQ101RalofTopic\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+    )
+    dial_b = make_record(
+        b"DIAL",
+        0x00002002,
+        make_subrecord(b"EDID", b"MQ101HadvarTopic\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+    )
+    info_a = make_record(
+        b"INFO",
+        0x00003001,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Hey you, you're finally awake.\x00")
+    )
+    info_b = make_record(
+        b"INFO",
+        0x00003002,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Who are you? Step forward.\x00")
+    )
+
+    grup_a = make_grup(struct.pack("<I", 0x00002001), info_a, grp_type=5)
+    grup_b = make_grup(struct.pack("<I", 0x00002002), info_b, grp_type=5)
+
+    esp_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust_rec) +
+        make_grup(b"DIAL", dial_a + dial_b) +
+        grup_a + grup_b
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialogs = [e for e in entries if e.is_dialog]
+    assert len(dialogs) == 2
+
+    entry_a = next(d for d in dialogs if d.form_id == "00003001")
+    entry_b = next(d for d in dialogs if d.form_id == "00003002")
+
+    assert entry_a.quest_edid == "MQ101"
+    assert entry_a.topic_edid == "MQ101RalofTopic"
+
+    assert entry_b.quest_edid == "MQ101"
+    assert entry_b.topic_edid == "MQ101HadvarTopic"
+
+
+def test_esp_parser_dialogue_hierarchy_t3_one_topic_multiple_infos(tmp_path):
+    """
+    T3: One DIAL with multiple INFO records.
+    Verifies that all child INFOs receive the same parent topic and quest.
+    """
+    esp_path = tmp_path / "SharedTopic.esp"
+    qust_rec = make_record(b"QUST", 0x00001000, make_subrecord(b"EDID", b"FreeformWhiterun\x00"))
+    dial_rec = make_record(
+        b"DIAL",
+        0x00002000,
+        make_subrecord(b"EDID", b"WhiterunGuardHello\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+    )
+    info1 = make_record(
+        b"INFO",
+        0x00003010,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"I used to be an adventurer like you.\x00")
+    )
+    info2 = make_record(
+        b"INFO",
+        0x00003020,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Let me guess, someone stole your sweetroll.\x00")
+    )
+    topic_grup = make_grup(struct.pack("<I", 0x00002000), info1 + info2, grp_type=5)
+
+    esp_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust_rec) +
+        make_grup(b"DIAL", dial_rec) +
+        topic_grup
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialogs = [e for e in entries if e.is_dialog]
+    assert len(dialogs) == 2
+    for d in dialogs:
+        assert d.quest_edid == "FreeformWhiterun"
+        assert d.topic_edid == "WhiterunGuardHello"
+        assert d.defining_plugin == "SharedTopic.esp"
+
+
+def test_esp_parser_dialogue_hierarchy_t4_multi_response_info(tmp_path):
+    """
+    T4: Single INFO record with two TRDT/NAM1 response pairs.
+    Verifies that both emitted StringEntries preserve identical quest_edid, topic_edid,
+    defining_plugin, and local_object_id, but distinct raw string_index values.
+    """
+    esp_path = tmp_path / "MultiResponse.esp"
+    qust_rec = make_record(b"QUST", 0x00001000, make_subrecord(b"EDID", b"CW01\x00"))
+    dial_rec = make_record(
+        b"DIAL",
+        0x00002000,
+        make_subrecord(b"EDID", b"CW01TulliusSpeech\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+    )
+    info_body = (
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"First sentence of the speech.\x00") +
+        make_subrecord(b"TRDT", bytes([0]*12 + [2] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Second sentence of the speech.\x00")
+    )
+    info_rec = make_record(b"INFO", 0x00004000, info_body)
+    topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=5)
+
+    esp_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust_rec) +
+        make_grup(b"DIAL", dial_rec) +
+        topic_grup
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialogs = [e for e in entries if e.is_dialog]
+    assert len(dialogs) == 2
+
+    resp1, resp2 = dialogs[0], dialogs[1]
+    assert resp1.quest_edid == "CW01"
+    assert resp2.quest_edid == "CW01"
+    assert resp1.topic_edid == "CW01TulliusSpeech"
+    assert resp2.topic_edid == "CW01TulliusSpeech"
+    assert resp1.defining_plugin == "MultiResponse.esp"
+    assert resp2.defining_plugin == "MultiResponse.esp"
+    assert resp1.local_object_id == 0x004000
+    assert resp2.local_object_id == 0x004000
+    assert resp1.string_index == 1
+    assert resp2.string_index == 2
+
+
+def test_esp_parser_dialogue_hierarchy_t5_master_override(tmp_path):
+    """
+    T5: Master-owned INFO override in child .esp.
+    Verifies that defining_plugin remains the master plugin, and quest_edid/topic_edid
+    are resolved across the master index.
+    """
+    master_path = tmp_path / "Skyrim.esm"
+    qust_rec = make_record(b"QUST", 0x00010000, make_subrecord(b"EDID", b"DialogueWhiterun\x00"))
+    dial_rec = make_record(
+        b"DIAL",
+        0x00020000,
+        make_subrecord(b"EDID", b"DialogueWhiterunCarlottaIntro\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00010000))
+    )
+    info_rec = make_record(
+        b"INFO",
+        0x0006497C,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Original English text.\x00")
+    )
+    master_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust_rec) +
+        make_grup(b"DIAL", dial_rec) +
+        make_grup(struct.pack("<I", 0x00020000), info_rec, grp_type=5)
+    )
+
+    child_path = tmp_path / "CarlottaSpanishPatch.esp"
+    # Child overrides the INFO FormID 0x0006497C (master index 0 -> 0x0006497C)
+    override_body = (
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Texto traducido en espanol.\x00")
+    )
+    override_rec = make_record(b"INFO", 0x0006497C, override_body)
+    override_grup = make_grup(struct.pack("<I", 0x00020000), override_rec, grp_type=5)
+
+    child_path.write_bytes(
+        make_tes4_header(["Skyrim.esm"]) +
+        override_grup
+    )
+
+    entries = parse_esp_file(child_path, master_search_paths=[tmp_path])
+    dialog = next(e for e in entries if e.is_dialog)
+    assert dialog.defining_plugin == "Skyrim.esm"
+    assert dialog.local_object_id == 0x06497C
+    assert dialog.quest_edid == "DialogueWhiterun"
+    assert dialog.topic_edid == "DialogueWhiterunCarlottaIntro"
+    assert dialog.string_index == 1
