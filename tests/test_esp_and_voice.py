@@ -1427,3 +1427,82 @@ def test_tes5_type_7_group_interleaved_unrelated_records(tmp_path):
     assert dialog.topic_edid == "RealTopic"
     assert dialog.quest_edid == "RealQuest"
     assert dialog.topic_edid != "UnrelatedProximityTopic"
+
+
+def test_tes5_nested_dial_topic_children_realistic_layout(tmp_path):
+    """
+    Authentic nested TES5 dialogue layout fixture:
+      GRUP type 0 label="QUST"
+        QUST record (0x00001000, EDID "TG00")
+      GRUP type 0 label="DIAL"
+        DIAL record (0x00002000, EDID "TG00Brynjolf", QNAM 0x00001000)
+        GRUP type 7 label=0x00002000 (Topic Children)
+          INFO record (0x000136C9, TRDT response=1, NAM1 text)
+    """
+    esp_path = tmp_path / "NestedLayout.esp"
+    qust_rec = make_record(b"QUST", 0x00001000, make_subrecord(b"EDID", b"TG00\x00"))
+    qust_top_grup = make_grup(b"QUST", qust_rec, grp_type=0)
+
+    dial_rec = make_record(
+        b"DIAL",
+        0x00002000,
+        make_subrecord(b"EDID", b"TG00Brynjolf\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+    )
+    info_rec = make_record(
+        b"INFO",
+        0x000136C9,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Never done an honest day's work, eh?\x00")
+    )
+    topic_children_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
+    dial_top_grup = make_grup(b"DIAL", dial_rec + topic_children_grup, grp_type=0)
+
+    esp_path.write_bytes(
+        make_tes4_header() +
+        qust_top_grup +
+        dial_top_grup
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialogs = [e for e in entries if e.is_dialog]
+    assert len(dialogs) == 1
+    d = dialogs[0]
+    assert d.topic_edid == "TG00Brynjolf"
+    assert d.quest_edid == "TG00"
+    assert d.string_index == 1
+    assert d.defining_plugin == "NestedLayout.esp"
+    assert d.local_object_id == 0x0136C9
+
+
+def test_esp_parser_info_without_anam_yields_none_voice_type(tmp_path):
+    """
+    Proves that an INFO record without an explicit ANAM speaker subrecord
+    yields voice_type is None in StringEntry (boundary for Phase 2).
+    """
+    esp_path = tmp_path / "NoAnam.esp"
+    qust_rec = make_record(b"QUST", 0x00001000, make_subrecord(b"EDID", b"MyQuest\x00"))
+    dial_rec = make_record(
+        b"DIAL",
+        0x00002000,
+        make_subrecord(b"EDID", b"MyTopic\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+    )
+    info_rec = make_record(
+        b"INFO",
+        0x00003000,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Generic dialogue line without ANAM.\x00")
+    )
+    topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
+
+    esp_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust_rec) +
+        make_grup(b"DIAL", dial_rec) +
+        topic_grup
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialog = next(e for e in entries if e.is_dialog)
+    assert dialog.voice_type is None

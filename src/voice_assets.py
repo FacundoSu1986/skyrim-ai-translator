@@ -18,29 +18,53 @@ class VoiceAssetMetadataError(ValueError):
     pass
 
 
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+_WINDOWS_FORBIDDEN_CHARS = set('<>:"/\\|?*')
+
+
 def _validate_path_component(comp: str, field_name: str) -> None:
     """
     Ensures a directory or filename path component does not contain path traversal,
-    separators, null bytes, or dangerous drive prefixes.
+    separators, null bytes, ASCII control characters, forbidden Windows characters,
+    trailing periods/spaces, or reserved Windows device names.
     """
     if comp is None or not isinstance(comp, str):
         raise VoiceAssetMetadataError(f"{field_name} must be a string, got {type(comp).__name__}")
 
-    cleaned = comp.strip()
-    if not cleaned:
-        raise VoiceAssetMetadataError(f"{field_name} cannot be empty or whitespace only")
+    if not comp:
+        raise VoiceAssetMetadataError(f"{field_name} cannot be empty")
 
-    # Reject null bytes and path separators
-    if "\x00" in comp:
-        raise VoiceAssetMetadataError(f"{field_name} contains forbidden null byte")
-    if "/" in comp or "\\" in comp:
-        raise VoiceAssetMetadataError(f"{field_name} contains path separator: {comp!r}")
-    if ":" in comp:
-        raise VoiceAssetMetadataError(f"{field_name} contains forbidden colon/drive prefix: {comp!r}")
-    if ".." in comp.split():
-        raise VoiceAssetMetadataError(f"{field_name} contains directory traversal '..': {comp!r}")
-    if comp == "." or comp == "..":
-        raise VoiceAssetMetadataError(f"{field_name} contains relative traversal component: {comp!r}")
+    if comp.startswith(" ") or comp.endswith(" "):
+        raise VoiceAssetMetadataError(f"{field_name} cannot have leading or trailing whitespace: {comp!r}")
+
+    if comp.endswith("."):
+        raise VoiceAssetMetadataError(f"{field_name} cannot have trailing period: {comp!r}")
+
+    for c in comp:
+        code = ord(c)
+        if code < 32:
+            raise VoiceAssetMetadataError(
+                f"{field_name} contains forbidden ASCII control character ({code}): {comp!r}"
+            )
+        if c in _WINDOWS_FORBIDDEN_CHARS:
+            raise VoiceAssetMetadataError(
+                f"{field_name} contains forbidden Windows character '{c}': {comp!r}"
+            )
+
+    if comp == "." or comp == ".." or ".." in comp:
+        raise VoiceAssetMetadataError(
+            f"{field_name} contains relative directory traversal '..': {comp!r}"
+        )
+
+    stem = comp.split(".")[0].upper()
+    if stem in _WINDOWS_RESERVED_NAMES:
+        raise VoiceAssetMetadataError(
+            f"{field_name} uses reserved Windows device name: {comp!r}"
+        )
 
 
 def build_voice_basename(

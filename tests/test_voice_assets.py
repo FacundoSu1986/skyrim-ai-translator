@@ -141,6 +141,27 @@ def test_build_voice_relative_path_custom_plugin_and_wav():
     "   ",
     "..",
     ".",
+    "CON",
+    "con",
+    "CON.txt",
+    "NUL.esp",
+    "PRN",
+    "COM1",
+    "com9",
+    "LPT1",
+    "LPT9",
+    "BadPlugin.esp ",
+    "BadPlugin.esp.",
+    " BadPlugin.esp",
+    "Bad\x01Plugin.esp",
+    "Bad\x1FPlugin.esp",
+    "Bad<Plugin.esp",
+    "Bad>Plugin.esp",
+    "Bad:Plugin.esp",
+    'Bad"Plugin.esp',
+    "Bad|Plugin.esp",
+    "Bad?Plugin.esp",
+    "Bad*Plugin.esp",
 ])
 def test_path_safety_rejects_malicious_plugin(bad_plugin):
     with pytest.raises(VoiceAssetMetadataError):
@@ -155,13 +176,38 @@ def test_path_safety_rejects_malicious_plugin(bad_plugin):
     "C:MaleNord",
     "",
     "   ",
+    "Male?Nord",
+    "Male*Nord",
+    'Male"Nord',
+    "Male<Nord",
+    "Male>Nord",
+    "Male|Nord",
+    "CON",
+    "AUX",
+    "MaleNord ",
+    "MaleNord.",
+    " MaleNord",
+    "Male\x05Nord",
 ])
 def test_path_safety_rejects_malicious_voice_type(bad_voice_type):
     with pytest.raises(VoiceAssetMetadataError):
         build_voice_relative_path("Skyrim.esm", bad_voice_type, "TG00_TG00Brynjolf_000136C9_1")
 
 
-@pytest.mark.parametrize("bad_ext", ["fuz", "wav", "/.fuz", "..fuz", ".fuz\x00", ""])
+@pytest.mark.parametrize("valid_plugin,valid_voice_type", [
+    ("Skyrim.esm", "MaleNord"),
+    ("Dawnguard.esm", "FemaleYoungEager"),
+    ("Dragonborn.esm", "MaleEvenToned"),
+    ("HearthFires.esm", "FemaleChild"),
+    ("My Custom Mod.esp", "FemaleCommander"),
+    ("Unofficial Skyrim Special Edition Patch.esp", "MaleBrute"),
+])
+def test_path_safety_preserves_valid_components(valid_plugin, valid_voice_type):
+    rel = build_voice_relative_path(valid_plugin, valid_voice_type, "TG00_TG00Brynjolf_000136C9_1")
+    assert rel == Path(f"Sound/Voice/{valid_plugin}/{valid_voice_type}/TG00_TG00Brynjolf_000136C9_1.fuz")
+
+
+@pytest.mark.parametrize("bad_ext", ["fuz", "wav", "/.fuz", "..fuz", ".fuz\x00", "", ".fuz ", ".fuz.", ".f?z", ".f*z"])
 def test_path_safety_rejects_malicious_extension(bad_ext):
     with pytest.raises(VoiceAssetMetadataError):
         build_voice_relative_path("Skyrim.esm", "MaleNord", "TG00_TG00Brynjolf_000136C9_1", extension=bad_ext)
