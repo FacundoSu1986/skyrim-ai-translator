@@ -995,7 +995,7 @@ def test_esp_parser_dialogue_hierarchy_t1_basic(tmp_path):
         make_subrecord(b"NAM1", b"Never done an honest day's work, eh?\x00")
     )
     info_rec = make_record(b"INFO", 0x000136C9, info_body)
-    topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=5)
+    topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
 
     esp_path.write_bytes(
         make_tes4_header() +
@@ -1045,8 +1045,8 @@ def test_esp_parser_dialogue_hierarchy_t2_one_quest_two_topics(tmp_path):
         make_subrecord(b"NAM1", b"Who are you? Step forward.\x00")
     )
 
-    grup_a = make_grup(struct.pack("<I", 0x00002001), info_a, grp_type=5)
-    grup_b = make_grup(struct.pack("<I", 0x00002002), info_b, grp_type=5)
+    grup_a = make_grup(struct.pack("<I", 0x00002001), info_a, grp_type=7)
+    grup_b = make_grup(struct.pack("<I", 0x00002002), info_b, grp_type=7)
 
     esp_path.write_bytes(
         make_tes4_header() +
@@ -1094,7 +1094,7 @@ def test_esp_parser_dialogue_hierarchy_t3_one_topic_multiple_infos(tmp_path):
         make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
         make_subrecord(b"NAM1", b"Let me guess, someone stole your sweetroll.\x00")
     )
-    topic_grup = make_grup(struct.pack("<I", 0x00002000), info1 + info2, grp_type=5)
+    topic_grup = make_grup(struct.pack("<I", 0x00002000), info1 + info2, grp_type=7)
 
     esp_path.write_bytes(
         make_tes4_header() +
@@ -1133,7 +1133,7 @@ def test_esp_parser_dialogue_hierarchy_t4_multi_response_info(tmp_path):
         make_subrecord(b"NAM1", b"Second sentence of the speech.\x00")
     )
     info_rec = make_record(b"INFO", 0x00004000, info_body)
-    topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=5)
+    topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
 
     esp_path.write_bytes(
         make_tes4_header() +
@@ -1183,7 +1183,7 @@ def test_esp_parser_dialogue_hierarchy_t5_master_override(tmp_path):
         make_tes4_header() +
         make_grup(b"QUST", qust_rec) +
         make_grup(b"DIAL", dial_rec) +
-        make_grup(struct.pack("<I", 0x00020000), info_rec, grp_type=5)
+        make_grup(struct.pack("<I", 0x00020000), info_rec, grp_type=7)
     )
 
     child_path = tmp_path / "CarlottaSpanishPatch.esp"
@@ -1193,7 +1193,7 @@ def test_esp_parser_dialogue_hierarchy_t5_master_override(tmp_path):
         make_subrecord(b"NAM1", b"Texto traducido en espanol.\x00")
     )
     override_rec = make_record(b"INFO", 0x0006497C, override_body)
-    override_grup = make_grup(struct.pack("<I", 0x00020000), override_rec, grp_type=5)
+    override_grup = make_grup(struct.pack("<I", 0x00020000), override_rec, grp_type=7)
 
     child_path.write_bytes(
         make_tes4_header(["Skyrim.esm"]) +
@@ -1207,3 +1207,223 @@ def test_esp_parser_dialogue_hierarchy_t5_master_override(tmp_path):
     assert dialog.quest_edid == "DialogueWhiterun"
     assert dialog.topic_edid == "DialogueWhiterunCarlottaIntro"
     assert dialog.string_index == 1
+
+
+# --- TES5 TOPIC CHILDREN GROUP REGRESSION TESTS (T-GRUP-1 to T-GRUP-5) ---
+
+def test_tes5_topic_children_group_type_7_association(tmp_path):
+    """
+    T-GRUP-1: Proves that TES5 Topic Children GRUP with group_type=7 and label=DIAL.FormID
+    correctly associates child INFO records with the DIAL's topic_edid and parent quest_edid.
+    """
+    esp_path = tmp_path / "Grup7Test.esp"
+    qust_rec = make_record(b"QUST", 0x00001000, make_subrecord(b"EDID", b"MyQuest\x00"))
+    dial_rec = make_record(
+        b"DIAL",
+        0x00002000,
+        make_subrecord(b"EDID", b"MyTopic\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+    )
+    info_rec = make_record(
+        b"INFO",
+        0x00003000,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Hello from group type 7.\x00")
+    )
+    topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
+
+    esp_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust_rec) +
+        make_grup(b"DIAL", dial_rec) +
+        topic_grup
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialog = next(e for e in entries if e.is_dialog)
+    assert dialog.topic_edid == "MyTopic"
+    assert dialog.quest_edid == "MyQuest"
+
+
+def test_tes5_group_type_5_not_interpreted_as_topic_children(tmp_path):
+    """
+    T-GRUP-2: Proves that GRUP type 5 (Exterior Cell Sub-Block in TES5) is NOT interpreted
+    as Topic Children. If an INFO is enclosed in a type 5 group, topic_edid must remain None.
+    """
+    esp_path = tmp_path / "Grup5Test.esp"
+    qust_rec = make_record(b"QUST", 0x00001000, make_subrecord(b"EDID", b"MyQuest\x00"))
+    dial_rec = make_record(
+        b"DIAL",
+        0x00002000,
+        make_subrecord(b"EDID", b"MyTopic\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+    )
+    info_rec = make_record(
+        b"INFO",
+        0x00003000,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Orphaned line in type 5 group.\x00")
+    )
+    # Group type 5 (Exterior Cell Sub-Block)
+    grup_type_5 = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=5)
+
+    esp_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust_rec) +
+        make_grup(b"DIAL", dial_rec) +
+        grup_type_5
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialog = next(e for e in entries if e.is_dialog)
+    # Must NOT associate with MyTopic because grp_type=5 is Exterior Cell Sub-Block
+    assert dialog.topic_edid is None
+    assert dialog.quest_edid is None
+
+
+def test_tes5_two_type_7_groups_no_parent_leak(tmp_path):
+    """
+    T-GRUP-3: Proves that two consecutive type-7 groups do not leak parent context to each other.
+    """
+    esp_path = tmp_path / "GrupLeakTest.esp"
+    qust1 = make_record(b"QUST", 0x00001001, make_subrecord(b"EDID", b"QuestOne\x00"))
+    qust2 = make_record(b"QUST", 0x00001002, make_subrecord(b"EDID", b"QuestTwo\x00"))
+    dial1 = make_record(
+        b"DIAL",
+        0x00002001,
+        make_subrecord(b"EDID", b"TopicOne\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001001))
+    )
+    dial2 = make_record(
+        b"DIAL",
+        0x00002002,
+        make_subrecord(b"EDID", b"TopicTwo\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001002))
+    )
+    info1 = make_record(
+        b"INFO",
+        0x00003001,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Topic one line.\x00")
+    )
+    info2 = make_record(
+        b"INFO",
+        0x00003002,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Topic two line.\x00")
+    )
+
+    grup1 = make_grup(struct.pack("<I", 0x00002001), info1, grp_type=7)
+    grup2 = make_grup(struct.pack("<I", 0x00002002), info2, grp_type=7)
+
+    esp_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust1 + qust2) +
+        make_grup(b"DIAL", dial1 + dial2) +
+        grup1 + grup2
+    )
+
+    entries = parse_esp_file(esp_path)
+    d1 = next(e for e in entries if e.form_id == "00003001")
+    d2 = next(e for e in entries if e.form_id == "00003002")
+
+    assert d1.topic_edid == "TopicOne"
+    assert d1.quest_edid == "QuestOne"
+    assert d2.topic_edid == "TopicTwo"
+    assert d2.quest_edid == "QuestTwo"
+
+
+def test_tes5_type_7_group_master_dial_reference(tmp_path):
+    """
+    T-GRUP-4: Proves that a type-7 group whose label references a DIAL defined in a master file
+    correctly resolves topic_edid and quest_edid across the master index.
+    """
+    master_path = tmp_path / "Skyrim.esm"
+    qust_rec = make_record(b"QUST", 0x00010000, make_subrecord(b"EDID", b"MasterQuest\x00"))
+    dial_rec = make_record(
+        b"DIAL",
+        0x00020000,
+        make_subrecord(b"EDID", b"MasterTopic\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00010000))
+    )
+    master_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust_rec) +
+        make_grup(b"DIAL", dial_rec)
+    )
+
+    child_path = tmp_path / "ChildMod.esp"
+    # Child defines a new INFO under the master's DIAL 0x00020000
+    info_rec = make_record(
+        b"INFO",
+        0x01003000,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"New child line under master topic.\x00")
+    )
+    # Topic children group labeled with master's DIAL FormID (master index 0 -> 0x00020000)
+    topic_grup = make_grup(struct.pack("<I", 0x00020000), info_rec, grp_type=7)
+
+    child_path.write_bytes(
+        make_tes4_header(["Skyrim.esm"]) +
+        topic_grup
+    )
+
+    entries = parse_esp_file(child_path, master_search_paths=[tmp_path])
+    dialog = next(e for e in entries if e.is_dialog)
+    assert dialog.topic_edid == "MasterTopic"
+    assert dialog.quest_edid == "MasterQuest"
+    assert dialog.defining_plugin == "ChildMod.esp"
+
+
+def test_tes5_type_7_group_interleaved_unrelated_records(tmp_path):
+    """
+    T-GRUP-5: Interleaves unrelated records (NPC_, BOOK, WEAP) and unrelated GRUPs between
+    DIAL and the Topic Children group, proving that INFO identity is strictly derived from the
+    type-7 group label rather than record proximity or 'last seen DIAL'.
+    """
+    esp_path = tmp_path / "InterleavedTest.esp"
+    qust_real = make_record(b"QUST", 0x00001000, make_subrecord(b"EDID", b"RealQuest\x00"))
+    dial_real = make_record(
+        b"DIAL",
+        0x00002000,
+        make_subrecord(b"EDID", b"RealTopic\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+    )
+    dial_unrelated = make_record(
+        b"DIAL",
+        0x00002999,
+        make_subrecord(b"EDID", b"UnrelatedProximityTopic\x00") +
+        make_subrecord(b"QNAM", struct.pack("<I", 0x00001999))
+    )
+    unrelated_npc = make_record(b"NPC_", 0x00005000, make_subrecord(b"EDID", b"DummyNPC\x00"))
+    unrelated_book = make_record(
+        b"BOOK",
+        0x00006000,
+        make_subrecord(b"EDID", b"DummyBook\x00") +
+        make_subrecord(b"FULL", b"Book Title\x00")
+    )
+    info_rec = make_record(
+        b"INFO",
+        0x00003000,
+        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
+        make_subrecord(b"NAM1", b"Strictly associated via GRUP label 0x00002000.\x00")
+    )
+    # The topic children group label explicitly points to RealTopic (0x00002000), even though
+    # UnrelatedProximityTopic (0x00002999) was declared more recently.
+    topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
+
+    esp_path.write_bytes(
+        make_tes4_header() +
+        make_grup(b"QUST", qust_real) +
+        make_grup(b"DIAL", dial_real) +
+        make_grup(b"NPC_", unrelated_npc) +
+        make_grup(b"BOOK", unrelated_book) +
+        make_grup(b"DIAL", dial_unrelated) +  # Proximity trap
+        topic_grup
+    )
+
+    entries = parse_esp_file(esp_path)
+    dialog = next(e for e in entries if e.is_dialog)
+    assert dialog.topic_edid == "RealTopic"
+    assert dialog.quest_edid == "RealQuest"
+    assert dialog.topic_edid != "UnrelatedProximityTopic"

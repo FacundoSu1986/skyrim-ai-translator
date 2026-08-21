@@ -85,7 +85,7 @@ def _decode_string(raw_bytes: bytes) -> str:
 def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, int, str, bytes, Optional[int]]]:
     """
     Yields (record_type, flags, form_id_val, form_id_hex, body, parent_dial_formid)
-    for every record, entering GRUPs and tracking parent Topic Children GRUPs (grp_type == 5).
+    for every record, entering GRUPs and tracking parent Topic Children GRUPs (grp_type == 7 in TES5).
     """
     offset = 0
     total_len = len(data)
@@ -125,10 +125,10 @@ def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, int, str, bytes, Op
             else:
                 body = b""
 
-        # Find enclosing Topic Children GRUP (grp_type == 5)
+        # Find enclosing Topic Children GRUP (grp_type == 7 in TES5)
         parent_dial_formid: Optional[int] = None
         for _g_end, g_type, g_label in reversed(grup_stack):
-            if g_type == 5:
+            if g_type == 7:
                 parent_dial_formid = g_label
                 break
 

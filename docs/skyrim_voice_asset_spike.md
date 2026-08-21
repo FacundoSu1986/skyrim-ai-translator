@@ -4,7 +4,7 @@
 - **Objective**: Prove the complete deterministic transformation from raw Skyrim plugin `INFO` binary dialogue records to exact Creation Kit voice file basenames, Skyrim relative directory paths, and structurally valid `.fuz` container bytes.
 - **Base Commit**: `12e8d10e7eaaef74efbea16b20b4e3c89ce7182c` (PR #7 verified merge)
 - **Phase 2 Status**: **`SPIKE_STRUCTURAL_PROOF`**
-- **Test Suite**: **190 passed** (all 136 baseline tests + 54 new hermetic tests).
+- **Test Suite**: **195 passed** (all 136 baseline tests + 59 new hermetic tests: 10 in `tests/test_esp_and_voice.py` and 49 in `tests/test_voice_assets.py`).
 
 ---
 
@@ -16,7 +16,7 @@ Plugin Binary (.esp / .esm)
 Pass 1 Indexing: QUST(EDID), DIAL(EDID, QNAM), VTYP(EDID), NPC_(ANAM, VTCK, TPLT)
       ↓
 Pass 2 Subrecord & Hierarchy Traversal:
-   INFO record inside Topic Children GRUP (grp_type == 5, label == DIAL FormID)
+   INFO record inside Topic Children GRUP (grp_type == 7, label == DIAL FormID)
    ANAM -> NPC_ -> VTCK/TPLT -> VTYP.EDID -> voice_type
    DIAL FormID -> DIAL.EDID -> topic_edid (or "" if empty)
    DIAL.QNAM / INFO.QSTI -> QUST.EDID -> quest_edid
