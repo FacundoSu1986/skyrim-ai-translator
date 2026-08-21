@@ -201,7 +201,7 @@ def test_path_safety_rejects_malicious_voice_type(bad_voice_type):
         build_voice_relative_path("Skyrim.esm", bad_voice_type, "TG00_TG00Brynjolf_000136C9_1")
 
 
-@pytest.mark.parametrize("valid_plugin,valid_voice_type", [
+@pytest.mark.parametrize(("valid_plugin", "valid_voice_type"), [
     ("Skyrim.esm", "MaleNord"),
     ("My..Mod.esp", "MaleNord"),
     ("COM10", "MaleNord"),
@@ -278,7 +278,7 @@ def test_validate_voice_asset_entry_empty_topic_allowed():
     validate_voice_asset_entry(entry)
 
 
-@pytest.mark.parametrize("missing_field,value", [
+@pytest.mark.parametrize(("missing_field", "value"), [
     ("is_dialog", False),
     ("defining_plugin", None),
     ("voice_type", None),
@@ -352,12 +352,12 @@ def test_windows_component_length():
     # A. 255 ASCII characters as a standalone validated component -> accepted
     valid_255 = "a" * 255
     _validate_path_component(valid_255, "plugin")
-    
+
     # B. 256 ASCII characters -> rejected
     invalid_256 = "a" * 256
     with pytest.raises(VoiceAssetMetadataError, match="plugin exceeds Windows component length limit"):
         _validate_path_component(invalid_256, "plugin")
-        
+
     # C. Unicode supplementary characters whose UTF-16 representation exceeds 255 code units -> rejected
     # 𐍈 is U+10348 (GOTHIC LETTER HWAIR), takes 2 UTF-16 code units.
     # 128 of them takes 256 code units, even though it's 128 characters.
