@@ -42,13 +42,55 @@ def test_voice_mapper():
     assert resolve_voice_for_entry(None, default_fallback="es-ES-AlvaroNeural") == "es-ES-AlvaroNeural"
 
 
-def test_free_translator_glossary():
+def test_free_translator_glossary(monkeypatch):
+    import io
+    import json
+    import urllib.parse
+    import urllib.request
+
     assert translate_free_text_sync("") == ""
     assert translate_free_text_sync("   ") == "   "
 
+    class MockResponse:
+        def __init__(self, data: bytes):
+            self._data = io.BytesIO(data)
+
+        def read(self) -> bytes:
+            return self._data.read()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def mock_urlopen(req, timeout=10):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        parsed = urllib.parse.urlparse(url)
+        q_param = urllib.parse.parse_qs(parsed.query).get("q", [""])[0]
+        translated = f"El {q_param} en el reino."
+        payload = [[[translated, q_param, None, None, 0]]]
+        return MockResponse(json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
     result = translate_free_text_sync("The Dragonborn travels to Whiterun to meet the Jarl.")
-    assert "Sangre de Dragón" in result or "Dragonborn" in result
-    assert "Carrera Blanca" in result or "Whiterun" in result
+    assert "Sangre de Dragón" in result
+    assert "Carrera Blanca" in result
+    assert "Jarl" in result
+
+
+def test_free_translator_error_propagation(monkeypatch):
+    import urllib.error
+    import urllib.request
+    import pytest
+
+    def mock_urlopen_fail(req, timeout=10):
+        raise urllib.error.URLError("Simulated network timeout")
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen_fail)
+    with pytest.raises(RuntimeError, match="Fallo del traductor gratuito"):
+        translate_free_text_sync("The Dragonborn arrives.")
 
 
 def test_free_translator_language_glossary_isolation():
