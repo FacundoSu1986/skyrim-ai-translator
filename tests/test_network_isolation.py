@@ -2,14 +2,16 @@
 Regression tests for hermetic test network isolation.
 
 Proves:
-1. Default-deny behavior: outbound urllib and socket connections are blocked.
-2. Google Translate, OpenAI, and arbitrary external endpoints are blocked unless explicitly mocked.
-3. Raw socket / non-urllib clients (http.client, socket) cannot bypass the guard.
-4. Loopback (127.0.0.1, ::1, localhost) is permitted for in-process testing.
-5. Explicit test-scoped mocks (monkeypatch) work seamlessly.
-6. Sensitive credentials and query parameters are stripped from error messages.
-7. Network-marked tests are skipped by default unless RUN_NETWORK_TESTS=1.
-8. RUN_NETWORK_TESTS=1 does not disable isolation for unmarked tests.
+1. Default-deny behavior: outbound DNS, urllib, and socket connections are blocked.
+2. External hostname resolution (getaddrinfo, gethostbyname) is blocked without live DNS.
+3. Subdomain spoofing (e.g. 127.example.com) is rejected by semantic IP validation.
+4. Real loopback (127.0.0.0/8, ::1, localhost) is permitted for in-process testing.
+5. Google Translate, OpenAI, and arbitrary external endpoints are blocked unless explicitly mocked.
+6. Raw socket / non-urllib clients (http.client, socket) cannot bypass the guard.
+7. Explicit test-scoped mocks (monkeypatch) work seamlessly.
+8. Sensitive credentials and query parameters are stripped from error messages.
+9. Network-marked tests are skipped by default unless RUN_NETWORK_TESTS=1.
+10. RUN_NETWORK_TESTS=1 does not disable isolation for unmarked tests.
 """
 
 import http.client
@@ -28,6 +30,40 @@ except ImportError:
 
 from src.free_translator import translate_free_text_sync
 from src.translator import create_openai_compatible_translator
+
+
+def test_arbitrary_hostname_dns_resolution_blocked():
+    """Attempting DNS resolution for external hostnames must fail immediately."""
+    with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for 'example.invalid'"):
+        socket.getaddrinfo("example.invalid", 80)
+
+    with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for 'api.openai.com'"):
+        socket.gethostbyname("api.openai.com")
+
+    with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for 'translate.googleapis.com'"):
+        socket.gethostbyname_ex("translate.googleapis.com")
+
+
+def test_subdomain_spoofing_loopback_rejected():
+    """Hostnames textually starting with '127.' must NOT be treated as loopback."""
+    with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for '127.example.com'"):
+        socket.getaddrinfo("127.example.com", 80)
+
+    with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for '127.0.0.1.attacker.com'"):
+        socket.getaddrinfo("127.0.0.1.attacker.com", 80)
+
+
+def test_real_ipv4_and_ipv6_loopback_range_allowed():
+    """Semantic IP loopback detection allows the full 127.0.0.0/8 range and ::1."""
+    for loopback_ip in ["127.0.0.1", "127.0.0.2", "127.255.255.254", "::1"]:
+        addrinfo = socket.getaddrinfo(loopback_ip, 80)
+        assert len(addrinfo) > 0
+
+
+def test_localhost_resolution_allowed():
+    """Resolution of literal 'localhost' is permitted for local server testing."""
+    addrinfo = socket.getaddrinfo("localhost", 80)
+    assert len(addrinfo) > 0
 
 
 def test_arbitrary_https_urlopen_blocked_by_default():
@@ -60,7 +96,7 @@ async def test_unmocked_openai_translator_blocked_by_default():
 
 
 def test_arbitrary_socket_connect_blocked_by_default():
-    """Low-level socket.connect to external host/IP must fail immediately."""
+    """Low-level socket.connect to external IP must fail immediately."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         with pytest.raises(NetworkAccessDeniedError, match="socket.connect to"):
@@ -70,7 +106,7 @@ def test_arbitrary_socket_connect_blocked_by_default():
 
 
 def test_arbitrary_socket_connect_ex_blocked_by_default():
-    """Low-level socket.connect_ex to external host/IP must fail immediately."""
+    """Low-level socket.connect_ex to external IP must fail immediately."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         with pytest.raises(NetworkAccessDeniedError, match="socket.connect_ex to"):
@@ -79,11 +115,11 @@ def test_arbitrary_socket_connect_ex_blocked_by_default():
         sock.close()
 
 
-def test_raw_http_client_blocked_by_socket_guard():
-    """Standard http.client (which does not use urllib.request.urlopen) is blocked by socket guard."""
+def test_raw_http_client_blocked_by_guard():
+    """Standard http.client (which does not use urllib.request.urlopen) is blocked."""
     conn = http.client.HTTPSConnection("example.com", timeout=2)
     try:
-        with pytest.raises(NetworkAccessDeniedError, match="socket.connect"):
+        with pytest.raises(NetworkAccessDeniedError):
             conn.request("GET", "/")
     finally:
         conn.close()
