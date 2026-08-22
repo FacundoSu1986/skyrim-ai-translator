@@ -1,13 +1,124 @@
 <!doctype html>
-<html lang="es">
+<html lang="%SITE_LANG%">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Skyrim AI Translator | Automatizador de localización y doblaje neural</title>
+
+    <!-- Identidad y descripción -->
+    <title>%SITE_TITLE%</title>
+    <meta name="description" content="%SITE_DESCRIPTION%" />
+    <meta name="keywords" content="%SITE_KEYWORDS%" />
+    <meta name="author" content="%SITE_AUTHOR%" />
+    <meta name="application-name" content="%SITE_NAME%" />
+    <meta name="generator" content="Vite + React" />
+
+    <!-- Rastreo e indexación -->
+    <link rel="canonical" href="%SITE_URL%/" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <link rel="alternate" hreflang="es" href="%SITE_URL%/" />
+    <link rel="alternate" hreflang="x-default" href="%SITE_URL%/" />
+
+    <!-- Iconos y color de marca -->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <meta name="theme-color" content="%SITE_THEME_COLOR%" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Open Graph (Facebook, Discord, Nexus Mods, Slack) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="%SITE_NAME%" />
+    <meta property="og:locale" content="es_ES" />
+    <meta property="og:url" content="%SITE_URL%/" />
+    <meta property="og:title" content="%SITE_TITLE%" />
+    <meta property="og:description" content="%SITE_SOCIAL_DESCRIPTION%" />
+    <meta property="og:image" content="%SITE_OG_IMAGE%" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:alt" content="%SITE_OG_IMAGE_ALT%" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="%SITE_TITLE%" />
+    <meta name="twitter:description" content="%SITE_SOCIAL_DESCRIPTION%" />
+    <meta name="twitter:image" content="%SITE_OG_IMAGE%" />
+    <meta name="twitter:image:alt" content="%SITE_OG_IMAGE_ALT%" />
+
+    <!--
+      Datos estructurados schema.org. Describen la herramienta como
+      SoftwareApplication para habilitar resultados enriquecidos, y declaran
+      explícitamente que el proyecto no está afiliado a Bethesda Softworks.
+    -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "%SITE_NAME%",
+        "url": "%SITE_URL%/",
+        "description": "%SITE_DESCRIPTION%",
+        "applicationCategory": "UtilitiesApplication",
+        "applicationSubCategory": "Herramienta de localización y modding",
+        "operatingSystem": "Windows, Linux, macOS",
+        "inLanguage": "es",
+        "isAccessibleForFree": true,
+        "license": "https://opensource.org/licenses/MIT",
+        "codeRepository": "%SITE_REPOSITORY%",
+        "programmingLanguage": ["Python", "JavaScript"],
+        "image": "%SITE_OG_IMAGE%",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "author": {
+          "@type": "Person",
+          "name": "%SITE_AUTHOR%",
+          "url": "%SITE_REPOSITORY%"
+        },
+        "featureList": [
+          "Parseo de plugins .esp y tablas .strings, .dlstrings e .ilstrings",
+          "Traducción contextual con glosario de lore de Skyrim",
+          "Doblaje neural por VoiceType con Edge-TTS",
+          "Exportación a Dynamic String Distributor (DSD)",
+          "Inyección directa de traducciones en Mod Organizer 2"
+        ],
+        "disambiguatingDescription": "Proyecto comunitario independiente. No está afiliado, patrocinado ni respaldado por Bethesda Softworks LLC ni ZeniMax Media Inc."
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+
+    <!--
+      La interfaz se renderiza con React, así que sin JavaScript el HTML
+      quedaría vacío: los rastreadores que no ejecutan scripts no verían
+      contenido alguno. Este bloque da a personas y buscadores una
+      descripción real del proyecto en el HTML inicial.
+    -->
+    <noscript>
+      <main>
+        <h1>%SITE_NAME%</h1>
+        <p>%SITE_DESCRIPTION%</p>
+        <h2>Qué hace</h2>
+        <ul>
+          <li>Lee plugins <code>.esp</code> y tablas de localización <code>.strings</code>, <code>.dlstrings</code> e <code>.ilstrings</code>.</li>
+          <li>Traduce el texto respetando el glosario de lore de The Elder Scrolls V: Skyrim.</li>
+          <li>Genera doblaje neural por <code>VoiceType</code> con Edge-TTS.</li>
+          <li>Exporta a Dynamic String Distributor (DSD) e inyecta el resultado en Mod Organizer 2.</li>
+        </ul>
+        <p>
+          Esta aplicación necesita JavaScript. Puedes consultar el código fuente,
+          la documentación y las instrucciones de instalación en
+          <a href="%SITE_REPOSITORY%">%SITE_REPOSITORY%</a>.
+        </p>
+        <p>
+          Proyecto comunitario independiente, sin afiliación con Bethesda
+          Softworks LLC ni ZeniMax Media Inc.
+        </p>
+      </main>
+    </noscript>
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

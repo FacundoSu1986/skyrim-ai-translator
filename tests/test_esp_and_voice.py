@@ -1,4 +1,6 @@
 import hashlib
+import json
+import logging
 import struct
 from pathlib import Path
 from src.esp_parser import parse_esp_file, MasterResolver, RecordKey, _resolve_record_key
@@ -1507,3 +1509,61 @@ def test_esp_parser_info_without_anam_yields_none_voice_type(tmp_path):
     entries = parse_esp_file(esp_path)
     dialog = next(e for e in entries if e.is_dialog)
     assert dialog.voice_type is None
+
+
+# ---------------------------------------------------------------------------
+# Conformidad del traductor gratuito (ver docs/legal/COMPLIANCE-REVIEW.md)
+# ---------------------------------------------------------------------------
+
+def _capture_free_translate_request(monkeypatch):
+    """Ejecuta una traduccion gratuita y devuelve la Request enviada."""
+    import urllib.request as _urllib_request
+
+    captured = {}
+
+    class _FakeResponse:
+        def read(self):
+            return json.dumps([[["hola", "hello", None, None, 0]]]).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+    def _fake_urlopen(req, timeout=10):
+        captured["request"] = req
+        return _FakeResponse()
+
+    monkeypatch.setattr(_urllib_request, "urlopen", _fake_urlopen)
+    translate_free_text_sync("hello", target_lang="Spanish")
+    return captured["request"]
+
+
+def test_free_translator_identifies_itself_honestly(monkeypatch):
+    """El cliente se identifica como el proyecto, sin suplantar a un navegador."""
+    # Arrange / Act
+    request = _capture_free_translate_request(monkeypatch)
+
+    # Assert
+    user_agent = request.get_header("User-agent")
+    assert "skyrim-ai-translator" in user_agent
+    assert "Mozilla" not in user_agent
+    assert "Chrome" not in user_agent
+
+
+def test_free_translator_warns_about_unofficial_endpoint_once(monkeypatch, caplog):
+    """El aviso de terminos de servicio se emite una vez por proceso, no por linea."""
+    # Arrange
+    import src.free_translator as free_translator
+
+    monkeypatch.setattr(free_translator, "_tos_notice_emitted", False)
+
+    # Act
+    with caplog.at_level(logging.WARNING, logger="src.free_translator"):
+        _capture_free_translate_request(monkeypatch)
+        _capture_free_translate_request(monkeypatch)
+
+    # Assert
+    notices = [r for r in caplog.records if "Terminos de Servicio" in r.message]
+    assert len(notices) == 1
