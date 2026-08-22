@@ -17,10 +17,12 @@
 
 # Denote binary files
 *.png binary
+*.webp binary
 *.jpg binary
 *.jpeg binary
 *.gif binary
 *.ico binary
+*.woff2 binary
 *.mp3 binary
 *.wav binary
 *.zip binary
