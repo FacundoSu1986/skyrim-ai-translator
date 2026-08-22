@@ -29,7 +29,7 @@ consecuencia jurídica.
 | [H-08](#h-08) | Redistribución de mods traducidos sin permiso del autor original | **Alta** | ⚠️ Riesgo del usuario final, advertido |
 | [H-09](#h-09) | Google Fonts enlazado en caliente (transferencia de IP a un tercero) | **Media** | ✅ Corregido |
 | [H-10](#h-10) | Claves de API de terceros en `localStorage` | Baja | ℹ️ Documentado |
-| [H-11](#h-11) | La suite de tests llama al endpoint no oficial de Google en cada ejecución | Baja | ⚠️ Abierto |
+| [H-11](#h-11) | La suite de tests llamaba al endpoint no oficial de Google en cada ejecución | **Media** | ✅ Corregido |
 | [H-12](#h-12) | La API acepta rutas arbitrarias del sistema de ficheros | Baja | ℹ️ Documentado |
 
 **Veredicto general.** No se ha encontrado nada que impida publicar el proyecto
@@ -133,7 +133,8 @@ Dos cuestiones distintas:
    interfaz y las instrucciones que proporcionamos». El uso programado que hace
    el proyecto queda fuera de esos términos. La consecuencia práctica realista
    no es un litigio sino un corte de servicio (bloqueo por IP, `HTTP 429`), que
-   es exactamente lo que ocurre hoy al ejecutar los tests (ver H-11).
+   es exactamente lo que llegó a tumbar la suite de tests antes de aislarla de la
+   red (ver H-11).
 
 2. **El `User-Agent` falsificado.** Declararse como Chrome sobre Windows era una
    afirmación falsa dirigida a que el servidor tratase al cliente como un
@@ -389,25 +390,44 @@ logs, en payloads de error ni en el nombre de los trabajos.
 
 ## Parte 5 — Prácticas con consecuencia legal
 
-### H-11 · Los tests llaman al endpoint no oficial de Google {#h-11}
+### H-11 · Los tests llamaban al endpoint no oficial de Google {#h-11}
 
-**Severidad: baja · Estado: abierto**
+**Severidad: media · Estado: corregido en este cambio**
 
 `tests/test_esp_and_voice.py::test_free_translator_glossary` y cuatro tests de
-`tests/test_api.py` ejecutan traducciones reales contra
-`translate.googleapis.com`. Consecuencias:
+`tests/test_api.py` ejecutaban traducciones reales contra
+`translate.googleapis.com`. Dos consecuencias:
 
-- Cada ejecución de CI genera tráfico no autorizado contra el servicio de un
-  tercero, desde infraestructura de GitHub, multiplicado por cada push y cada PR.
-- Los tests son intrínsecamente frágiles: **hoy fallan con `HTTP 429: Too Many
-  Requests`**, y fallaban ya antes de los cambios de esta revisión.
+- **Cumplimiento.** Cada ejecución de CI generaba tráfico no autorizado contra
+  el servicio de un tercero, desde infraestructura de GitHub, multiplicado por
+  cada push y cada pull request. El hallazgo H-02 se aplicaba, sin que nadie lo
+  hubiera decidido, a la automatización del repositorio.
+- **Determinismo.** La suite dependía de la cuota que Google concediese a la IP
+  del runner. En cuanto esa IP quedaba limitada, cinco tests fallaban con
+  `HTTP 429: Too Many Requests` sin que nada del código hubiera cambiado.
 
-**Recomendación:** simular la respuesta HTTP en esos cinco tests, como ya hace
-`tests/test_translator.py` con el camino LLM y como hacen los dos tests de
-conformidad añadidos aquí. La cobertura no se pierde —lo que se valida es la
-protección del glosario, no la calidad de Google— y CI deja de depender de la
-red. No se ha aplicado en esta revisión por ser una reescritura de tests ajena
-al encargo; queda como tarea acotada y de bajo riesgo.
+**Corrección aplicada.** `tests/conftest.py` añade una barrera `autouse` que
+intercepta las peticiones a `translate.googleapis.com` en toda la suite y
+devuelve el texto recibido sin alterarlo. Cualquier otro destino pasa al
+`urlopen` real, de modo que los tests que simulan otras APIs no se ven
+afectados.
+
+La identidad de la respuesta es deliberada: el camino gratuito sustituye los
+términos del glosario por marcadores `__SKY_n__` antes de enviar el texto y los
+restaura al recibirlo. Devolviendo la entrada intacta, el marcador sobrevive al
+viaje y el test sigue ejercitando la lógica real de protección y restauración
+—incluida la separación por idioma, que exige que el francés conserve
+*Dragonborn* y no reciba *Sangre de Dragón*—. Lo que deja de ejercitarse es la
+calidad de la traducción de Google, que nunca fue responsabilidad de este
+repositorio.
+
+Resultado: la suite pasa entera (253 tests) y deja de depender de la red.
+
+**Nota sobre la detección.** Este hallazgo se documentó inicialmente como
+pendiente. Se corrigió al fallar CI en la rama de esta misma revisión: hasta
+entonces los cinco tests venían pasando en GitHub Actions, y solo fallaban en
+entornos cuya IP ya estaba limitada. Es la ilustración exacta del problema: una
+suite verde que dependía de una cuota ajena y no observable.
 
 ### H-12 · La API acepta rutas arbitrarias del sistema de ficheros {#h-12}
 
@@ -447,6 +467,7 @@ lista blanca de raíces permitidas.
 | `README.md` | Secciones de descargo legal y permisos de mods | H-05, H-08 |
 | `THIRD-PARTY-NOTICES.md` | Inventario de licencias de terceros (nuevo) | H-01 |
 | `tests/test_esp_and_voice.py` | Dos tests de conformidad del traductor gratuito | H-02 |
+| `tests/conftest.py` | Barrera de red: la suite no llama a Google (nuevo) | H-11 |
 
 ## Anexo B — Decisiones que quedan en manos del propietario
 
@@ -457,7 +478,6 @@ lista blanca de raíces permitidas.
    que el README no presente la herramienta como apta para uso comercial.
 2. **H-05.** Confirmar la procedencia y la licencia de
    `frontend/src/assets/skyrim-ui/dragon-medallion.webp` y dejarla registrada.
-3. **H-11.** Simular la red en los cinco tests que hoy llaman a Google.
-4. Añadir un `SECURITY.md` con una vía de contacto para reportar
+3. Añadir un `SECURITY.md` con una vía de contacto para reportar
    vulnerabilidades, y un `CONTRIBUTING.md` que aclare bajo qué licencia se
    aportan las contribuciones (habitualmente, la MIT del proyecto).
