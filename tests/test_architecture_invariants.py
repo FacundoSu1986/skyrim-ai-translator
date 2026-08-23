@@ -13,7 +13,15 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 SRC = RAIZ / "src"
-ARCHIVOS_PRODUCTIVOS = [RAIZ / "api.py", RAIZ / "main.py", *sorted(SRC.rglob("*.py"))]
+ENTRYPOINTS = [RAIZ / "api.py", RAIZ / "main.py"]
+
+for entrypoint in ENTRYPOINTS:
+    assert entrypoint.exists(), (
+        f"Entrypoint productivo esperado no encontrado: {entrypoint}. "
+        "Verifica cambios en el layout del proyecto antes de evaluar invariantes."
+    )
+
+ARCHIVOS_PRODUCTIVOS = [*ENTRYPOINTS, *sorted(SRC.rglob("*.py"))]
 
 EGRESS_URLOPEN_ESPERADO = {
     "src/free_translator.py": 1,
@@ -92,22 +100,23 @@ def _es_referencia_urlopen(valor: ast.AST, modulos: dict[str, str], directos: se
     return resuelto == "urllib.request.urlopen"
 
 
-def _es_urlopen(func: ast.AST, modulos: dict[str, str], directos: set[str]) -> bool:
-    return _es_referencia_urlopen(func, modulos, directos)
+def _contar_urlopen_en_arbol(arbol: ast.AST) -> int:
+    modulos, directos = _aliases_urlopen(arbol)
+    return sum(
+        1
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.Call) and _es_referencia_urlopen(nodo.func, modulos, directos)
+    )
 
 
 def _contar_urlopen(fuente: str) -> int:
-    arbol = ast.parse(fuente)
-    modulos, directos = _aliases_urlopen(arbol)
-    return sum(1 for nodo in ast.walk(arbol) if isinstance(nodo, ast.Call) and _es_urlopen(nodo.func, modulos, directos))
+    return _contar_urlopen_en_arbol(ast.parse(fuente))
 
 
 def _egress_urlopen_por_modulo() -> dict[str, int]:
     encontrados: Counter[str] = Counter()
     for path in ARCHIVOS_PRODUCTIVOS:
-        arbol = _leer_ast(path)
-        modulos, directos = _aliases_urlopen(arbol)
-        cantidad = sum(1 for nodo in ast.walk(arbol) if isinstance(nodo, ast.Call) and _es_urlopen(nodo.func, modulos, directos))
+        cantidad = _contar_urlopen_en_arbol(_leer_ast(path))
         if cantidad:
             encontrados[path.relative_to(RAIZ).as_posix()] = cantidad
     return dict(encontrados)
@@ -193,16 +202,28 @@ def _translate_entries_ast() -> ast.AsyncFunctionDef:
 def _mutaciones_directas_de_entry(funcion: ast.AsyncFunctionDef) -> list[int]:
     lineas: list[int] = []
     for nodo in ast.walk(funcion):
-        if isinstance(nodo, ast.Attribute) and isinstance(nodo.ctx, ast.Store) and isinstance(nodo.value, ast.Name) and nodo.value.id == "entry":
-            lineas.append(nodo.lineno)
-        elif isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Name) and nodo.func.id == "setattr" and nodo.args and isinstance(nodo.args[0], ast.Name) and nodo.args[0].id == "entry":
+        es_asignacion_atributo = (
+            isinstance(nodo, ast.Attribute)
+            and isinstance(nodo.ctx, ast.Store)
+            and isinstance(nodo.value, ast.Name)
+            and nodo.value.id == "entry"
+        )
+        es_setattr = (
+            isinstance(nodo, ast.Call)
+            and isinstance(nodo.func, ast.Name)
+            and nodo.func.id == "setattr"
+            and bool(nodo.args)
+            and isinstance(nodo.args[0], ast.Name)
+            and nodo.args[0].id == "entry"
+        )
+        if es_asignacion_atributo or es_setattr:
             lineas.append(nodo.lineno)
     return sorted(set(lineas))
 
 
 def _usa_replace_para_traduccion(funcion: ast.AsyncFunctionDef) -> bool:
     for nodo in ast.walk(funcion):
-        if not isinstance(nodo, ast.Call) or _nombre_punteado(nodo.func) != "replace":
+        if not isinstance(nodo, ast.Call) or _nombre_punteado(nodo.func) not in {"replace", "dataclasses.replace"}:
             continue
         if not nodo.args or not isinstance(nodo.args[0], ast.Name) or nodo.args[0].id != "entry":
             continue
@@ -232,6 +253,31 @@ def test_detector_time_sleep_reconoce_aliases_comunes() -> None:
         visitante = _BloqueoAsyncVisitor(modulos_time, sleep_directos)
         visitante.visit(arbol)
         assert visitante.hallazgos
+
+
+def test_detector_time_sleep_ignora_casos_permitidos() -> None:
+    fuentes = (
+        "import time\ndef f():\n    time.sleep(1)\n",
+        "import asyncio\nasync def f():\n    await asyncio.sleep(1)\n",
+        "import asyncio, time\nasync def f():\n    def _bloqueante():\n        time.sleep(1)\n    await asyncio.to_thread(_bloqueante)\n",
+    )
+    for fuente in fuentes:
+        arbol = ast.parse(fuente)
+        modulos_time, sleep_directos = _aliases_time(arbol)
+        visitante = _BloqueoAsyncVisitor(modulos_time, sleep_directos)
+        visitante.visit(arbol)
+        assert visitante.hallazgos == [], fuente
+
+
+def test_detector_replace_reconoce_ambas_formas() -> None:
+    fuentes = (
+        "from dataclasses import replace\nasync def f(entry):\n    return replace(entry, translated_text='ok')\n",
+        "import dataclasses\nasync def f(entry):\n    return dataclasses.replace(entry, translated_text='ok')\n",
+    )
+    for fuente in fuentes:
+        arbol = ast.parse(fuente)
+        funciones = [nodo for nodo in arbol.body if isinstance(nodo, ast.AsyncFunctionDef)]
+        assert _usa_replace_para_traduccion(funciones[0]), fuente
 
 
 def test_egress_http_directo_esta_congelado() -> None:
