@@ -1,10 +1,16 @@
 import json
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from api import app, jobs
 
+
 client = TestClient(app)
+
+
+async def _mock_free_translate(text: str, context: str = "") -> str:
+    return f"Traducido: {text}"
 
 def test_health_check():
     response = client.get("/api/health")
@@ -280,15 +286,16 @@ def test_websocket_unresolved_voice_fail_fast(tmp_path):
     job_id = res.json()["job_id"]
 
     messages = []
-    with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
-        while True:
-            try:
-                msg = ws.receive_json()
-                messages.append(msg)
-                if msg.get("status") in ["completed", "error"]:
+    with patch("api.free_translator_callable", new=_mock_free_translate):
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+            while True:
+                try:
+                    msg = ws.receive_json()
+                    messages.append(msg)
+                    if msg.get("status") in ["completed", "error"]:
+                        break
+                except Exception:
                     break
-            except Exception:
-                break
 
     # Must fail fast with status="error" and error_code="UNRESOLVED_VOICE_TYPES"
     assert jobs[job_id]["status"] == "error"
@@ -323,15 +330,16 @@ def test_websocket_unresolved_voice_allowed_when_voice_disabled(tmp_path):
     job_id = res.json()["job_id"]
 
     messages = []
-    with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
-        while True:
-            try:
-                msg = ws.receive_json()
-                messages.append(msg)
-                if msg.get("status") in ["completed", "error"]:
+    with patch("api.free_translator_callable", new=_mock_free_translate):
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+            while True:
+                try:
+                    msg = ws.receive_json()
+                    messages.append(msg)
+                    if msg.get("status") in ["completed", "error"]:
+                        break
+                except Exception:
                     break
-            except Exception:
-                break
 
     assert jobs[job_id]["status"] == "completed"
     # Legacy JSON input carries no DSD metadata: the export must be skipped
@@ -386,15 +394,16 @@ def test_upload_esp_skyrim_data_path_flow(tmp_path):
     job_id = res.json()["job_id"]
 
     messages = []
-    with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
-        while True:
-            try:
-                msg = ws.receive_json()
-                messages.append(msg)
-                if msg.get("status") in ["completed", "error"]:
+    with patch("api.free_translator_callable", new=_mock_free_translate):
+        with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
+            while True:
+                try:
+                    msg = ws.receive_json()
+                    messages.append(msg)
+                    if msg.get("status") in ["completed", "error"]:
+                        break
+                except Exception:
                     break
-            except Exception:
-                break
 
     assert jobs[job_id]["status"] == "completed"
 
@@ -450,7 +459,8 @@ def test_websocket_esp_dsd_official_output_path_and_content(tmp_path):
     assert res.status_code == 200
     job_id = res.json()["job_id"]
 
-    messages = _run_websocket_job(job_id)
+    with patch("api.free_translator_callable", new=_mock_free_translate):
+        messages = _run_websocket_job(job_id)
     assert jobs[job_id]["status"] == "completed", jobs[job_id].get("error")
 
     build_dir = Path(jobs[job_id]["output_dir"])
