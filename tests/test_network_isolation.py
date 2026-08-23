@@ -2,16 +2,19 @@
 Regression tests for hermetic test network isolation.
 
 Proves:
-1. Default-deny behavior: outbound DNS, urllib, and socket connections are blocked.
+1. Default-deny behavior: outbound DNS, reverse DNS, TCP, UDP datagrams, and urllib are blocked.
 2. External hostname resolution (getaddrinfo, gethostbyname) is blocked without live DNS.
-3. Subdomain spoofing (e.g. 127.example.com) is rejected by semantic IP validation.
-4. Real loopback (127.0.0.0/8, ::1, localhost) is permitted for in-process testing.
-5. Google Translate, OpenAI, and arbitrary external endpoints are blocked unless explicitly mocked.
-6. Raw socket / non-urllib clients (http.client, socket) cannot bypass the guard.
-7. Explicit test-scoped mocks (monkeypatch) work seamlessly.
-8. Sensitive credentials and query parameters are stripped from error messages.
-9. Network-marked tests are skipped by default unless RUN_NETWORK_TESTS=1.
-10. RUN_NETWORK_TESTS=1 does not disable isolation for unmarked tests.
+3. Reverse DNS (gethostbyaddr, getnameinfo) for external IPs is blocked without live DNS.
+4. Subdomain spoofing (e.g. 127.example.com) is rejected by semantic IP validation.
+5. Real loopback (127.0.0.0/8, ::1, localhost) is permitted for in-process testing.
+6. UDP datagram egress (sendto) to external literal IPs is blocked without DNS lookups.
+7. Loopback UDP datagram communication functions properly.
+8. Google Translate, OpenAI, and arbitrary external endpoints are blocked unless explicitly mocked.
+9. Raw socket / non-urllib clients (http.client, socket) cannot bypass the guard.
+10. Explicit test-scoped mocks (monkeypatch) work seamlessly.
+11. Sensitive credentials and query parameters are stripped from error messages.
+12. Network-marked tests are skipped by default unless RUN_NETWORK_TESTS=1.
+13. RUN_NETWORK_TESTS=1 does not disable isolation for unmarked tests.
 """
 
 import http.client
@@ -44,6 +47,26 @@ def test_arbitrary_hostname_dns_resolution_blocked():
         socket.gethostbyname_ex("translate.googleapis.com")
 
 
+def test_external_reverse_dns_blocked():
+    """Attempting reverse DNS lookups for external IPs must fail without network resolution."""
+    with pytest.raises(NetworkAccessDeniedError, match="reverse DNS lookup for '8.8.8.8'"):
+        socket.gethostbyaddr("8.8.8.8")
+
+    with pytest.raises(NetworkAccessDeniedError, match="reverse DNS lookup for"):
+        socket.getnameinfo(("8.8.8.8", 80), 0)
+
+
+def test_loopback_reverse_dns_allowed():
+    """Reverse DNS lookups for loopback IPs are allowed for local diagnostics."""
+    res_addr = socket.gethostbyaddr("127.0.0.1")
+    assert isinstance(res_addr, tuple)
+    assert len(res_addr) >= 1
+
+    res_name = socket.getnameinfo(("127.0.0.1", 80), 0)
+    assert isinstance(res_name, tuple)
+    assert len(res_name) == 2
+
+
 def test_subdomain_spoofing_loopback_rejected():
     """Hostnames textually starting with '127.' must NOT be treated as loopback."""
     with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for '127.example.com'"):
@@ -64,6 +87,33 @@ def test_localhost_resolution_allowed():
     """Resolution of literal 'localhost' is permitted for local server testing."""
     addrinfo = socket.getaddrinfo("localhost", 80)
     assert len(addrinfo) > 0
+
+
+def test_unconnected_udp_sendto_external_ip_blocked():
+    """UDP sendto targeting a literal external IP must be blocked without DNS lookups."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        with pytest.raises(NetworkAccessDeniedError, match="socket.sendto to"):
+            sock.sendto(b"unauthorized payload", ("8.8.8.8", 53))
+    finally:
+        sock.close()
+
+
+def test_loopback_udp_sendto_allowed():
+    """UDP sendto targeting loopback (127.0.0.1) is permitted."""
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server_sock.bind(("127.0.0.1", 0))
+    port = server_sock.getsockname()[1]
+
+    client_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sent_bytes = client_sock.sendto(b"loopback datagram", ("127.0.0.1", port))
+        assert sent_bytes > 0
+        data, _ = server_sock.recvfrom(1024)
+        assert data == b"loopback datagram"
+    finally:
+        client_sock.close()
+        server_sock.close()
 
 
 def test_arbitrary_https_urlopen_blocked_by_default():
