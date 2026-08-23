@@ -161,14 +161,18 @@ class _BloqueoAsyncVisitor(ast.NodeVisitor):
     def visit_AsyncFunctionDef(self, nodo: ast.AsyncFunctionDef) -> None:
         anterior = self.en_async
         self.en_async = True
-        for stmt in nodo.body:
-            self.visit(stmt)
-        self.en_async = anterior
+        try:
+            self.generic_visit(nodo)
+        finally:
+            self.en_async = anterior
 
     def visit_FunctionDef(self, nodo: ast.FunctionDef) -> None:
-        if self.en_async:
-            return
-        self.generic_visit(nodo)
+        anterior = self.en_async
+        self.en_async = False
+        try:
+            self.generic_visit(nodo)
+        finally:
+            self.en_async = anterior
 
     def visit_Call(self, nodo: ast.Call) -> None:
         if self.en_async:
@@ -267,6 +271,24 @@ def test_detector_time_sleep_ignora_casos_permitidos() -> None:
         visitante = _BloqueoAsyncVisitor(modulos_time, sleep_directos)
         visitante.visit(arbol)
         assert visitante.hallazgos == [], fuente
+
+
+def test_detector_time_sleep_detecta_async_anidado_en_sync() -> None:
+    fuente = (
+        "import time\n"
+        "async def exterior():\n"
+        "    def fabrica():\n"
+        "        async def interior():\n"
+        "            time.sleep(1)\n"
+        "        return interior\n"
+        "    interior = fabrica()\n"
+        "    await interior()\n"
+    )
+    arbol = ast.parse(fuente)
+    modulos_time, sleep_directos = _aliases_time(arbol)
+    visitante = _BloqueoAsyncVisitor(modulos_time, sleep_directos)
+    visitante.visit(arbol)
+    assert visitante.hallazgos == [5]
 
 
 def test_detector_replace_reconoce_ambas_formas() -> None:
