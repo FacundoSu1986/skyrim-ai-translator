@@ -142,7 +142,11 @@ def _guarded_getnameinfo(sockaddr: Any, flags: int) -> Any:
 def _guarded_urlopen(req: Union[str, urllib.request.Request], *args: Any, **kwargs: Any) -> Any:
     url = req.full_url if hasattr(req, "full_url") else str(req)
     parsed = urllib.parse.urlparse(url)
-    if _is_allowed_host(parsed.hostname):
+    if (
+        parsed.scheme in ("http", "https")
+        and parsed.hostname is not None
+        and _is_allowed_host(parsed.hostname)
+    ):
         return _REAL_URLOPEN(req, *args, **kwargs)
 
     sanitized = _sanitize_destination(req)
@@ -190,14 +194,15 @@ def _guarded_socket_sendto(self: socket.socket, *args: Any, **kwargs: Any) -> in
 
     try:
         peer = self.getpeername()
-        if _is_allowed_socket_address(peer):
-            return _REAL_SOCKET_SENDTO(self, *args, **kwargs)
-        sanitized = _sanitize_destination(peer)
-        raise NetworkAccessDeniedError(
-            f"Outbound network access is disabled during unit tests: socket.sendto to {sanitized}"
-        )
     except OSError:
         return _REAL_SOCKET_SENDTO(self, *args, **kwargs)
+
+    if _is_allowed_socket_address(peer):
+        return _REAL_SOCKET_SENDTO(self, *args, **kwargs)
+    sanitized = _sanitize_destination(peer)
+    raise NetworkAccessDeniedError(
+        f"Outbound network access is disabled during unit tests: socket.sendto to {sanitized}"
+    )
 
 
 def _guarded_socket_sendmsg(
@@ -217,14 +222,15 @@ def _guarded_socket_sendmsg(
 
     try:
         peer = self.getpeername()
-        if _is_allowed_socket_address(peer):
-            return _REAL_SOCKET_SENDMSG(self, buffers, ancdata, flags, address)
-        sanitized = _sanitize_destination(peer)
-        raise NetworkAccessDeniedError(
-            f"Outbound network access is disabled during unit tests: socket.sendmsg to {sanitized}"
-        )
     except OSError:
         return _REAL_SOCKET_SENDMSG(self, buffers, ancdata, flags, address)
+
+    if _is_allowed_socket_address(peer):
+        return _REAL_SOCKET_SENDMSG(self, buffers, ancdata, flags, address)
+    sanitized = _sanitize_destination(peer)
+    raise NetworkAccessDeniedError(
+        f"Outbound network access is disabled during unit tests: socket.sendmsg to {sanitized}"
+    )
 
 
 @pytest.fixture(autouse=True)

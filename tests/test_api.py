@@ -8,6 +8,10 @@ from api import app, jobs
 
 client = TestClient(app)
 
+
+async def _mock_free_translate(text: str, context: str = "") -> str:
+    return f"Traducido: {text}"
+
 def test_health_check():
     response = client.get("/api/health")
     assert response.status_code == 200
@@ -266,8 +270,6 @@ def test_websocket_empty_plugin_no_mock_fallback(tmp_path):
 
 def test_websocket_unresolved_voice_fail_fast(tmp_path):
     """Verify that dialogue with voice_type=None and generate_voice=True fails fast with 0 audio files and no auto-inject."""
-    from unittest.mock import patch
-
     test_json = tmp_path / "NoVoiceMod.json"
     dialogue_data = [
         {"FormID": "0005555A", "Text": "Who goes there?", "is_dialog": True, "voice_type": None}
@@ -283,11 +285,8 @@ def test_websocket_unresolved_voice_fail_fast(tmp_path):
     assert res.status_code == 200
     job_id = res.json()["job_id"]
 
-    async def mock_free_trans(text: str, context: str) -> str:
-        return f"Traducido: {text}"
-
     messages = []
-    with patch("api.free_translator_callable", side_effect=mock_free_trans):
+    with patch("api.free_translator_callable", new=_mock_free_translate):
         with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
             while True:
                 try:
@@ -315,8 +314,6 @@ def test_websocket_unresolved_voice_fail_fast(tmp_path):
 
 def test_websocket_unresolved_voice_allowed_when_voice_disabled(tmp_path):
     """Verify that dialogue with voice_type=None completes translation normally when generate_voice=False."""
-    from unittest.mock import patch
-
     test_json = tmp_path / "TextOnlyMod.json"
     dialogue_data = [
         {"FormID": "0007777A", "Text": "A letter from the Jarl.", "is_dialog": True, "voice_type": None}
@@ -332,11 +329,8 @@ def test_websocket_unresolved_voice_allowed_when_voice_disabled(tmp_path):
     assert res.status_code == 200
     job_id = res.json()["job_id"]
 
-    async def mock_free_trans(text: str, context: str) -> str:
-        return f"Traducido: {text}"
-
     messages = []
-    with patch("api.free_translator_callable", side_effect=mock_free_trans):
+    with patch("api.free_translator_callable", new=_mock_free_translate):
         with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
             while True:
                 try:
@@ -399,11 +393,8 @@ def test_upload_esp_skyrim_data_path_flow(tmp_path):
     assert res.status_code == 200
     job_id = res.json()["job_id"]
 
-    async def mock_free_trans(text: str, context: str) -> str:
-        return f"Traducido: {text}"
-
     messages = []
-    with patch("api.free_translator_callable", side_effect=mock_free_trans):
+    with patch("api.free_translator_callable", new=_mock_free_translate):
         with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
             while True:
                 try:
@@ -468,10 +459,7 @@ def test_websocket_esp_dsd_official_output_path_and_content(tmp_path):
     assert res.status_code == 200
     job_id = res.json()["job_id"]
 
-    async def mock_free_trans(text: str, context: str) -> str:
-        return f"Traducido: {text}"
-
-    with patch("api.free_translator_callable", side_effect=mock_free_trans):
+    with patch("api.free_translator_callable", new=_mock_free_translate):
         messages = _run_websocket_job(job_id)
     assert jobs[job_id]["status"] == "completed", jobs[job_id].get("error")
 
