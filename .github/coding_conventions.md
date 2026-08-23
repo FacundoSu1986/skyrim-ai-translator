@@ -1,59 +1,119 @@
-# Convenciones de Código — Skyrim AI Translation Agent
+# Convenciones de código — Skyrim AI Translation Agent
 
-Fuente detallada de convenciones técnicas e invariantes para el repositorio **skyrim-ai-translator**.
+Punto de entrada para agentes: [`AGENTS.md`](../AGENTS.md). Este archivo detalla
+invariantes y patrones técnicos; la precedencia documental se define en
+[`docs/documentation/source_of_truth.md`](../docs/documentation/source_of_truth.md).
 
-Stack: **Python 3.10+**, **FastAPI**, **React 19 + Vite**, **Edge-TTS**, **Dynamic String Distributor (DSD)**, integración con **Mod Organizer 2**.
+Stack: **Python 3.10+**, **FastAPI**, **React 19 + Vite**, **Edge-TTS**,
+**Dynamic String Distributor (DSD)** e integración con **Mod Organizer 2**.
 
----
+## 1. Jerarquía de prioridad
 
-## 1. Jerarquía de Prioridad
+| Prioridad | Dominio | Ejemplos |
+|---|---|---|
+| **P0** | Seguridad y secretos | API keys, path traversal, egress, datos de usuario |
+| **P1** | Integridad de datos y lore | glosario único, identidad de records/voz, exports |
+| **P2** | Correctitud async/SRE | event loop, límites de concurrencia, timeouts |
+| **P3** | Tests y contratos | pytest, anclas estructurales, hermeticidad |
+| **P4** | Mantenibilidad | typing, separación de responsabilidades, frontend |
 
-Si dos reglas o requerimientos colisionan, obedecer estrictamente este orden:
+## 2. Backend Python / FastAPI
 
-| Prioridad | Dominio | Ejemplos clave |
-|-----------|---------|----------------|
-| **P0** | Seguridad & Secretos | Protección de API keys, prevención de Path Traversal en MO2 / disco, sanitización de inputs. |
-| **P1** | Integridad de Datos y Lore | Única fuente de verdad en `SKYRIM_GLOSSARY`, inmutabilidad de `StringEntry`. |
-| **P2** | SRE & Concurrencia | No bloquear el event loop de FastAPI, semáforos en `translate_entries` y Edge-TTS. |
-| **P3** | Calidad & Testing | Pruebas unitarias en `pytest` para todo cambio de backend, build exitoso en frontend. |
-| **P4** | Mantenibilidad | Tipado explícito con `typing` / Pydantic, nombres descriptivos, código limpio sin duplicación. |
+### 2.1 Concurrencia
 
----
+- Prohibido `time.sleep()` dentro de `async def`; usar `asyncio.sleep()`.
+- I/O bloqueante inevitable se ejecuta con `asyncio.to_thread`.
+- Llamadas externas y TTS deben tener límites explícitos de concurrencia cuando
+  puedan multiplicarse por entrada.
+- No introducir paralelismo ilimitado mediante `asyncio.gather` sobre entradas
+  no acotadas sin un semáforo o mecanismo equivalente.
 
-## 2. Invariantes del Backend (Python / FastAPI)
+**Gate:** `tests/test_architecture_invariants.py` enumera código productivo y
+falla si aparece `time.sleep()` en contexto async.
 
-### 2.1 Concurrencia y Asyncio
-- Todo I/O bloqueante (lectura de disco de archivos pesados, `urllib.request` síncrono, generación de archivos masivos) debe envolverse en `asyncio.to_thread`.
-- Prohibido el uso de `time.sleep()` en corrutinas `async def`; usar siempre `asyncio.sleep()`.
-- Controlar el paralelismo hacia servicios externos o síntesis de voz mediante `asyncio.Semaphore` explícitos.
+### 2.2 Traducción y glosario
 
-### 2.2 Motor de Traducción y Glosario
-- `SKYRIM_GLOSSARY` (`src/translator.py`) es la **única fuente de verdad** para nombres propios, ciudades, facciones y lugares de Skyrim.
-- El pipeline gratuito (`free_translator.py`) y el pipeline de API LLM (`translator.py`) deben respetar este glosario de forma unificada y determinista.
-- Evitar incorporar adjetivos aislados fijos al glosario directo si requieren flexión de género o número en español; reservar el glosario para términos canónicos y nombres propios.
+- `SKYRIM_GLOSSARY` de `src/translator.py` es la única fuente de verdad de lore
+  localizada mantenida por el proyecto.
+- `src/free_translator.py` consume ese símbolo por import; no mantiene una copia.
+- Ambos pipelines deben conservar placeholders/formato y respetar el idioma
+  objetivo. Una corrección en uno obliga a revisar el hermano.
+- No agregar términos que requieran flexión contextual como si fueran nombres
+  canónicos invariantes.
 
-### 2.3 Modelos y Tipado
-- `StringEntry` (`src/models.py`) debe permanecer inmutable en transformaciones. Usar `dataclasses.replace` al generar una versión traducida.
-- Modelos de petición en FastAPI deben definirse con `pydantic.BaseModel` con tipos estrictos y valores por defecto sensatos.
+**Gate:** ancla AST de dueño único del glosario.
 
-### 2.4 Seguridad y Manejo de Errores
-- Las API keys (OpenAI / DeepSeek / etc.) se gestionan en memoria por solicitud o job y **nunca** se graban en logs, mensajes de WebSocket ni respuestas de error.
-- Las rutas provistas por el usuario para Mod Organizer 2 o subida de archivos deben resolverse y validarse con `pathlib.Path` para evitar escapes de directorio.
-- Devolver códigos de estado HTTP semánticos (404 para jobs inexistentes, 400 para payloads inválidos).
+### 2.3 Modelos y transformaciones
 
----
+- `StringEntry` es mutable a nivel de Python. La regla real es que los pipelines
+  de transformación no muten las instancias recibidas.
+- `translate_entries` crea el resultado con `dataclasses.replace`.
+- Cambiar campos de `StringEntry` obliga a revisar parser/ESP, DSD, TTS, API,
+  CLI y tests que serialicen o consuman esos campos.
 
-## 3. Invariantes del Frontend (React 19 + Vite)
+**Gate:** el AST de `translate_entries` no permite stores directos sobre
+`entry.<atributo>` y exige el reemplazo de `translated_text`.
 
-- Estructura modular de componentes bajo `frontend/src/`.
-- Uso de componentes accesibles con etiquetas semánticas y aria attributes donde aplique.
-- Manejo limpio del ciclo de vida de WebSockets (cerrar conexiones activas al desmontar componentes o reiniciar jobs).
+### 2.4 Red, privacidad y secretos
 
----
+- Toda nueva salida de red requiere revisión explícita de destino, timeout,
+  credenciales, sanitización de errores, términos del proveedor y estrategia de
+  test.
+- API keys, tokens y headers de autorización no se loguean.
+- No devolver excepciones crudas si pueden contener URLs con query strings,
+  credenciales o payloads sensibles.
+- Los tests son default-deny para red externa. Tests de integración real:
+  `@pytest.mark.network` + opt-in `RUN_NETWORK_TESTS=1`.
 
-## 4. Testing y CI
+**Gate:** el inventario de llamadas productivas directas a
+`urllib.request.urlopen` se congela por módulo y cantidad.
 
-- Suite de pruebas ejecutada con `pytest --verbose`.
-- Tests estructurados siguiendo el patrón **AAA** (Arrange, Act, Assert).
-- Los tests que verifiquen el estado global (`jobs` en `api.py`) deben limpiar o restaurar el estado para garantizar aislamiento entre pruebas.
-- Acciones de GitHub Actions ancladas mediante su commit SHA inmutable.
+### 2.5 Rutas y filesystem
+
+- Normalizar con `Path.resolve()` antes de autorizar un destino.
+- La autorización debe comprobar pertenencia semántica al root permitido; no
+  usar `str(path).startswith(str(root))`.
+- Crear directorios solo debajo de roots ya validados.
+- Una operación de escritura/copia sobre MO2 debe fallar cerrada ante un path
+  ambiguo o fuera del root.
+
+## 3. Frontend React / Vite
+
+- Componentes bajo `frontend/src/`; evitar lógica de dominio duplicada respecto
+  del backend.
+- Cerrar WebSockets al desmontar/reiniciar flujos.
+- Mantener accesibilidad semántica y `aria-*` cuando aplique.
+- Cambios frontend deben pasar `npm run lint` y `npm run build`.
+
+## 4. Testing
+
+- Pytest; tests con estructura AAA.
+- Preferir propiedades/inventarios completos frente a un caso manual cuando el
+  riesgo es “apareció un nuevo camino”.
+- Un ancla AST debe incluir tests del propio detector para aliases o formas
+  equivalentes relevantes.
+- Tests de estado global (`jobs`) deben restaurar/limpiar estado.
+- No depender de servicios externos para una suite unitaria verde.
+
+## 5. Documentación y drift
+
+El orden para describir el runtime es:
+
+1. código ejecutable actual + tests relevantes;
+2. decisiones arquitectónicas vigentes explícitas;
+3. referencia técnica verificada;
+4. guías de desarrollo/usuario;
+5. reportes, spikes, specs y comentarios históricos.
+
+Si una guía contradice runtime, registrar `DOCUMENTATION_DRIFT`, trazar callers y
+corregir la documentación una vez demostrado el contrato. No cambiar producción
+para satisfacer texto obsoleto.
+
+## 6. CI actual
+
+`.github/workflows/ci.yml` ejecuta:
+
+- backend: Python 3.11 + `pytest --verbose`;
+- frontend: Node 22 + `npm ci`, `npm run lint`, `npm run build`.
+
+Las acciones de GitHub deben permanecer ancladas a SHA inmutable.
