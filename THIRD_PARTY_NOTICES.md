@@ -21,7 +21,6 @@ This document contains licensing and copyright notices for third-party software 
    - [MIT License](#mit-license)
    - [BSD 3-Clause License](#bsd-3-clause-license)
    - [Apache License 2.0](#apache-license-20)
-   - [ISC License](#isc-license)
    - [GNU Lesser General Public License v3.0 (LGPL-3.0)](#gnu-lesser-general-public-license-v30-lgpl-30)
 
 ---
@@ -59,7 +58,6 @@ These components are distributed or fetched as standard package manager dependen
 | **React** | `^19.2.8` | MIT | Meta Platforms, Inc. & React Contributors | Declarative UI library powering the frontend Single Page Application (SPA). |
 | **react-dom** | `^19.2.8` | MIT | Meta Platforms, Inc. & React Contributors | DOM rendering bindings for React components. |
 | **Vite** | `^8.2.0` | MIT | Evan You & Vite Contributors | Modern frontend build tooling, bundler, and development server. |
-| **lucide-react** | `^0.x` / `latest` | ISC | Lucide Contributors | Consistent open-source icon set for the web interface. |
 
 ---
 
@@ -188,22 +186,6 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-```
-
-### ISC License
-
-```text
-Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted, provided that the above
-copyright notice and this permission notice appear in all copies.
-
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
 ### GNU Lesser General Public License v3.0 (LGPL-3.0)
