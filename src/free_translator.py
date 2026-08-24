@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import threading
 import urllib.parse
 import urllib.request
 import warnings
@@ -12,20 +13,23 @@ logger = logging.getLogger(__name__)
 
 # Single-warning emission tracking per process for unauthenticated GTX endpoint
 _warned_unofficial_gtx = False
+_warned_lock = threading.Lock()
 
 
 def _emit_gtx_deprecation_warning() -> None:
     """Emits a single deprecation warning per process about unauthenticated GTX endpoint."""
     global _warned_unofficial_gtx
     if not _warned_unofficial_gtx:
-        _warned_unofficial_gtx = True
-        msg = (
-            "El endpoint no autenticado Google Translate (GTX) está deprecado y carece de SLA "
-            "o garantías de términos de servicio. Se recomienda configurar un proveedor recomendado "
-            "(OpenAI-compatible u Ollama)."
-        )
-        warnings.warn(msg, UserWarning, stacklevel=2)
-        logger.warning(msg)
+        with _warned_lock:
+            if not _warned_unofficial_gtx:
+                _warned_unofficial_gtx = True
+                msg = (
+                    "El endpoint no autenticado Google Translate (GTX) está deprecado y carece de SLA "
+                    "o garantías de términos de servicio. Se recomienda configurar un proveedor recomendado "
+                    "(OpenAI-compatible u Ollama)."
+                )
+                warnings.warn(msg, UserWarning, stacklevel=2)
+                logger.warning(msg)
 
 # Sort glossary keys by length descending to match composite terms before single words
 _SORTED_GLOSSARY = sorted(SKYRIM_GLOSSARY.items(), key=lambda item: len(item[0]), reverse=True)

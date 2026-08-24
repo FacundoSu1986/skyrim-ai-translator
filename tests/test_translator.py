@@ -415,7 +415,43 @@ async def test_free_translator_callable_and_create(monkeypatch):
     assert res2 == "Bonjour"
 
 
+@pytest.mark.asyncio
+async def test_free_translator_concurrent_warning_thread_safety(monkeypatch, caplog):
+    import io
+    import json
+    import logging
+    import urllib.request
+    import warnings
+    import src.free_translator
+    from src.free_translator import free_translator_callable
 
+    class MockResponse:
+        def __enter__(self):
+            return io.BytesIO(json.dumps([[["Hola", "Hello"]]]).encode("utf-8"))
 
+        def __exit__(self, *args):
+            pass
 
+    def mock_urlopen(req, timeout=10):
+        return MockResponse()
 
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    monkeypatch.setattr(src.free_translator, "_warned_unofficial_gtx", False)
+
+    with caplog.at_level(logging.WARNING, logger="src.free_translator"):
+        with warnings.catch_warnings(record=True) as recorded_warnings:
+            warnings.simplefilter("always")
+            tasks = [
+                free_translator_callable(f"Hello {i}", "Context: UI")
+                for i in range(20)
+            ]
+            results = await asyncio.gather(*tasks)
+
+            assert len(results) == 20
+            assert all(r == "Hola" for r in results)
+            # Exactly one warning emitted across concurrent invocations
+            assert len(recorded_warnings) == 1
+            assert "GTX" in str(recorded_warnings[0].message)
+
+    gtx_logs = [record for record in caplog.records if "GTX" in record.message]
+    assert len(gtx_logs) == 1
