@@ -2,12 +2,34 @@ import asyncio
 import json
 import logging
 import re
+import threading
 import urllib.parse
 import urllib.request
+import warnings
 from typing import Awaitable, Callable
 from src.translator import SKYRIM_GLOSSARY
 
 logger = logging.getLogger(__name__)
+
+# Single-warning emission tracking per process for unauthenticated GTX endpoint
+_warned_unofficial_gtx = False
+_warned_lock = threading.Lock()
+
+
+def _emit_gtx_deprecation_warning() -> None:
+    """Emits a single deprecation warning per process about unauthenticated GTX endpoint."""
+    global _warned_unofficial_gtx
+    if not _warned_unofficial_gtx:
+        with _warned_lock:
+            if not _warned_unofficial_gtx:
+                _warned_unofficial_gtx = True
+                msg = (
+                    "El endpoint no autenticado Google Translate (GTX) está deprecado y carece de SLA "
+                    "o garantías de términos de servicio. Se recomienda configurar un proveedor recomendado "
+                    "(OpenAI-compatible u Ollama)."
+                )
+                warnings.warn(msg, UserWarning, stacklevel=2)
+                logger.warning(msg)
 
 # Sort glossary keys by length descending to match composite terms before single words
 _SORTED_GLOSSARY = sorted(SKYRIM_GLOSSARY.items(), key=lambda item: len(item[0]), reverse=True)
@@ -88,6 +110,8 @@ def translate_free_text_sync(text: str, target_lang: str = "Spanish") -> str:
     if not text or not text.strip():
         return text
 
+    _emit_gtx_deprecation_warning()
+
     processed_text, replacements = _protect_glossary(text, target_lang=target_lang)
 
     lang_code = _resolve_lang_code(target_lang)
@@ -95,7 +119,7 @@ def translate_free_text_sync(text: str, target_lang: str = "Spanish") -> str:
 
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers={"User-Agent": "skyrim-ai-translator/1.0 (https://github.com/FacundoSu1986/skyrim-ai-translator)"}
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
