@@ -17,6 +17,7 @@ ingesta de volcados JSON, traducción contextual con glosario de lore, staging d
 voz neural, exportación oficial DSD e integración con Mod Organizer 2.
 
 ### Componentes Principales y Límites de Alcance:
+
 1. **Parser de Skyrim (`src/parser.py` y `src/esp_parser.py`)**:
    - `src/parser.py`: Ingesta y validación de esquemas JSON con volcados de cadenas estructuradas (`StringEntry`).
    - `src/esp_parser.py`: Extracción binaria directa de registros translatables implementados (`INFO` para respuestas de diálogo con resolución de actores y temas, `QUST` para nombres y objetivos de misiones, además de `DIAL`, `BOOK`, `MESG`, `NPC_`, `WEAP`, `ARMO`, `SPEL`, `ACTI`, `ALCH`, `PERK`, `MGEF`, `FACT`, `RACE`, `MISC`, `FLOR`, `LCTN`) desde plugins `.esp`/`.esm`. Travesía de maestros en modo sólo lectura vía `MasterResolver` (`INFO.ANAM` -> `NPC_.VTCK/TPLT` -> `VTYP.EDID`).
