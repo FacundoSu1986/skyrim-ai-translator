@@ -473,3 +473,43 @@ async def test_free_translator_concurrent_warning_thread_safety(monkeypatch, cap
 
     gtx_logs = [record for record in caplog.records if "GTX" in record.message]
     assert len(gtx_logs) == 1
+
+
+def test_validate_api_base_allows_valid_endpoints():
+    from src.translator import _validate_api_base
+
+    assert _validate_api_base("https://api.openai.com/v1") == "https://api.openai.com/v1"
+    assert _validate_api_base("http://localhost:11434/v1/") == "http://localhost:11434/v1"
+    assert _validate_api_base("http://127.0.0.1:8000") == "http://127.0.0.1:8000"
+    assert _validate_api_base("https://openrouter.ai/api/v1") == "https://openrouter.ai/api/v1"
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "",
+        "   ",
+        "ftp://example.com/api",
+        "file:///etc/passwd",
+        "gopher://evil.com",
+        "http://169.254.169.254/latest/meta-data",
+        "http://169.254.169.254:80",
+        "https://[fe80::1]/secrets",
+        "not_a_url",
+    ],
+)
+def test_validate_api_base_rejects_unauthorized_destinations(bad_url):
+    from src.translator import _validate_api_base
+
+    with pytest.raises(ValueError):
+        _validate_api_base(bad_url)
+
+
+def test_create_openai_compatible_translator_fails_fast_on_invalid_api_base():
+    from src.translator import create_openai_compatible_translator
+
+    with pytest.raises(ValueError, match=r"Destino no permitido|Esquema no permitido|carece de host|no puede estar"):
+        create_openai_compatible_translator(
+            api_key="sk-test",
+            api_base="http://169.254.169.254/latest/meta-data",
+        )
