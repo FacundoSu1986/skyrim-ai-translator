@@ -63,41 +63,46 @@ def test_fonts_provenance_markdown_exists_and_matches_binary_hashes():
 
 
 def test_fonts_css_local_resolution_and_zero_remote_urls():
-    """Verifies that fonts.css and index.css have zero remote external URL imports and all local fonts resolve."""
-    assert FONTS_CSS.exists(), f"Missing fonts.css: {FONTS_CSS}"
-    assert INDEX_CSS.exists(), f"Missing index.css: {INDEX_CSS}"
+    """Verifies that all CSS files under frontend have zero remote external URL imports and all local fonts resolve."""
+    css_files = list((FRONTEND / "src").glob("**/*.css"))
+    assert len(css_files) >= 2, f"Expected at least 2 CSS files under frontend/src, found {len(css_files)}"
 
-    fonts_css_clean = _strip_css_comments(FONTS_CSS.read_text(encoding="utf-8"))
-    index_css_clean = _strip_css_comments(INDEX_CSS.read_text(encoding="utf-8"))
+    remote_url_pattern = re.compile(r"""url\(\s*['"]?(?:https?:)?//""", re.IGNORECASE)
+    remote_import_pattern = re.compile(r"""@import\s+['"]?(?:https?:)?//""", re.IGNORECASE)
+    local_url_pattern = re.compile(r"""url\(\s*['"]?(\./assets/fonts/[^'")]+)['"]?\s*\)""", re.IGNORECASE)
 
-    # 1. Assert zero remote URLs in both CSS files
-    remote_pattern = re.compile(r"url\(\s*['\"]?https?://", re.IGNORECASE)
-    assert not remote_pattern.search(fonts_css_clean), "fonts.css contains remote http/https URL references"
-    assert not remote_pattern.search(index_css_clean), "index.css contains remote http/https URL references"
+    for css_file in css_files:
+        css_clean = _strip_css_comments(css_file.read_text(encoding="utf-8"))
 
-    # 2. Assert no remote Google Fonts domain references in executable rules
-    assert "fonts.googleapis.com" not in fonts_css_clean
-    assert "fonts.googleapis.com" not in index_css_clean
-    assert "fonts.gstatic.com" not in fonts_css_clean
-    assert "fonts.gstatic.com" not in index_css_clean
+        # 1. Assert zero remote URLs or protocol-relative URLs in url(...)
+        assert not remote_url_pattern.search(css_clean), (
+            f"{css_file.name} contains remote http/https/protocol-relative URL references"
+        )
 
-    # 3. Assert all font url() references in fonts.css point to existing files
-    local_url_pattern = re.compile(r"url\(\s*['\"]?(\./assets/fonts/[^'\")]+)['\"]?\s*\)", re.IGNORECASE)
-    local_urls = local_url_pattern.findall(fonts_css_clean)
-    assert len(local_urls) >= 6, f"Expected at least 6 font URL declarations in fonts.css, found {len(local_urls)}"
+        # 2. Assert zero remote @import statements
+        assert not remote_import_pattern.search(css_clean), f"{css_file.name} contains remote @import statement"
 
-    for rel_path in local_urls:
-        resolved_path = (FRONTEND / "src" / rel_path).resolve()
-        assert resolved_path.exists(), f"Referenced font path '{rel_path}' does not exist on disk: {resolved_path}"
+        # 3. Assert no remote Google Fonts domain references
+        assert "fonts.googleapis.com" not in css_clean, f"{css_file.name} references fonts.googleapis.com"
+        assert "fonts.gstatic.com" not in css_clean, f"{css_file.name} references fonts.gstatic.com"
+
+        # 4. Assert all local font url() references resolve to actual files
+        for rel_path in local_url_pattern.findall(css_clean):
+            resolved_path = (css_file.parent / rel_path).resolve()
+            assert resolved_path.exists(), (
+                f"Referenced font path '{rel_path}' in {css_file.name} does not exist on disk: {resolved_path}"
+            )
 
 
 def test_ofl_license_file_exists():
-    """Verifies that the SIL Open Font License 1.1 file exists with full text."""
+    """Verifies that the SIL Open Font License 1.1 file exists with complete canonical clauses."""
     assert OFL_TXT.exists(), f"Missing OFL.txt license file at {OFL_TXT}"
     content = OFL_TXT.read_text(encoding="utf-8")
     assert "SIL OPEN FONT LICENSE Version 1.1" in content
     assert "PREAMBLE" in content
     assert "PERMISSION & CONDITIONS" in content
+    assert "TERMINATION" in content
+    assert "DISCLAIMER" in content
 
 
 def test_requirements_pins_edge_tts_7x():
@@ -112,16 +117,32 @@ def test_requirements_pins_edge_tts_7x():
 
 
 def test_third_party_notices_and_compliance_review_exist():
-    """Verifies existence and structural completeness of legal documentation."""
+    """Verifies existence and structural completeness of legal documentation and package inventory."""
     assert THIRD_PARTY_NOTICES.exists(), f"Missing {THIRD_PARTY_NOTICES}"
     assert COMPLIANCE_REVIEW.exists(), f"Missing {COMPLIANCE_REVIEW}"
 
     notices_text = THIRD_PARTY_NOTICES.read_text(encoding="utf-8")
     compliance_text = COMPLIANCE_REVIEW.read_text(encoding="utf-8")
 
-    # Verify key runtime dependencies are documented in notices
-    for dep in ["FastAPI", "uvicorn", "websockets", "pydantic", "edge-tts", "httpx", "React", "Vite"]:
-        assert dep in notices_text, f"Expected dependency '{dep}' to be listed in THIRD_PARTY_NOTICES.md"
+    # Verify all backend runtime dependencies are documented in notices
+    dev_test_tools = {"pytest", "pytest-asyncio", "pytest-cov", "ruff"}
+    backend_reqs = REQUIREMENTS_TXT.read_text(encoding="utf-8").splitlines()
+    for line in backend_reqs:
+        clean = line.strip()
+        if not clean or clean.startswith("#"):
+            continue
+        pkg_name = re.split(r"[><=~;\[]", clean)[0].strip()
+        if pkg_name.lower() in dev_test_tools:
+            continue
+        # Verify package is documented in notices
+        pattern = re.compile(rf"\b{re.escape(pkg_name)}\b", re.IGNORECASE)
+        assert pattern.search(notices_text), (
+            f"Backend runtime package '{pkg_name}' not documented in THIRD_PARTY_NOTICES.md"
+        )
+
+    # Verify core frontend dependencies
+    for dep in ["React", "react-dom", "Vite"]:
+        assert dep in notices_text, f"Expected frontend dependency '{dep}' to be listed in THIRD_PARTY_NOTICES.md"
 
     # Verify compliance taxonomy markers
     for rating in ["VERIFIED", "CONTRACTUAL RISK", "REQUIRES LEGAL REVIEW"]:
