@@ -1,5 +1,3 @@
-from typing import Optional
-
 # Mapping Skyrim VoiceType identifiers to optimal Microsoft Edge-TTS neural voices
 SKYRIM_VOICE_MAP = {
     # --- FEMALE VOICES ---
@@ -20,7 +18,6 @@ SKYRIM_VOICE_MAP = {
     "FemaleChild": "es-MX-DaliaNeural",
     "FemaleKhajiit": "es-ES-ElviraNeural",
     "FemaleArgonian": "es-ES-ElviraNeural",
-
     # --- MALE VOICES ---
     "MaleNord": "es-ES-AlvaroNeural",
     "MaleBrute": "es-ES-AlvaroNeural",
@@ -48,7 +45,8 @@ SKYRIM_VOICE_MAP = {
     "MaleArgonian": "es-ES-AlvaroNeural",
 }
 
-def resolve_voice_for_entry(voice_type: Optional[str], default_fallback: str = "es-ES-AlvaroNeural") -> str:
+
+def resolve_voice_for_entry(voice_type: str | None, default_fallback: str = "es-ES-AlvaroNeural") -> str:
     """
     Returns the most fitting Edge-TTS neural voice based on the Skyrim VoiceType.
     Falls back to a female voice if 'Female' is in the name, or male if 'Male', or default.

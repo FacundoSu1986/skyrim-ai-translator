@@ -15,7 +15,7 @@ import os
 import socket
 import urllib.parse
 import urllib.request
-from typing import Any, Optional, Union
+from typing import Any
 
 import pytest
 
@@ -55,7 +55,7 @@ def _sanitize_destination(destination: Any) -> str:
     return str(destination)
 
 
-def _is_allowed_host(host: Optional[str]) -> bool:
+def _is_allowed_host(host: str | None) -> bool:
     """
     Validates whether host is an authorized local loopback destination.
     Uses semantic IP validation with ipaddress to prevent partial-match spoofing
@@ -69,9 +69,7 @@ def _is_allowed_host(host: Optional[str]) -> bool:
     try:
         ip = ipaddress.ip_address(normalized)
         is_mapped_loopback = (
-            ip.ipv4_mapped and ip.ipv4_mapped.is_loopback
-            if hasattr(ip, "ipv4_mapped") and ip.ipv4_mapped
-            else False
+            ip.ipv4_mapped and ip.ipv4_mapped.is_loopback if hasattr(ip, "ipv4_mapped") and ip.ipv4_mapped else False
         )
         return ip.is_loopback or is_mapped_loopback
     except ValueError:
@@ -139,20 +137,14 @@ def _guarded_getnameinfo(sockaddr: Any, flags: int) -> Any:
     )
 
 
-def _guarded_urlopen(req: Union[str, urllib.request.Request], *args: Any, **kwargs: Any) -> Any:
+def _guarded_urlopen(req: str | urllib.request.Request, *args: Any, **kwargs: Any) -> Any:
     url = req.full_url if hasattr(req, "full_url") else str(req)
     parsed = urllib.parse.urlparse(url)
-    if (
-        parsed.scheme in ("http", "https")
-        and parsed.hostname is not None
-        and _is_allowed_host(parsed.hostname)
-    ):
+    if parsed.scheme in ("http", "https") and parsed.hostname is not None and _is_allowed_host(parsed.hostname):
         return _REAL_URLOPEN(req, *args, **kwargs)
 
     sanitized = _sanitize_destination(req)
-    raise NetworkAccessDeniedError(
-        f"Outbound network access is disabled during unit tests: {sanitized}"
-    )
+    raise NetworkAccessDeniedError(f"Outbound network access is disabled during unit tests: {sanitized}")
 
 
 def _guarded_socket_connect(self: socket.socket, address: Any) -> Any:

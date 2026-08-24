@@ -1,5 +1,54 @@
-[tool.pytest.ini_options]
-pythonpath = ["."]
-markers = [
-    "network: tests that require explicit live network opt-in (enabled via RUN_NETWORK_TESTS=1)"
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["src", "tests", "."]
+exclude = [
+    ".git",
+    ".pytest_cache",
+    "venv",
+    ".venv",
+    "frontend",
+    "dist",
 ]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import sorting)
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "PLW",  # pylint warnings
+    "RUF",  # ruff specific rules
+]
+ignore = [
+    "E501",    # line too long (handled by formatter)
+    "B008",    # function call in argument defaults (FastAPI File/Form pattern)
+    "PLW0603", # global statement
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "strict"
+addopts = "-v --strict-markers"
+markers = [
+    "network: tests that require explicit live network opt-in (enabled via RUN_NETWORK_TESTS=1)",
+    "asyncio: asynchronous test coroutines",
+]
+
+[tool.coverage.run]
+source = ["src", "api.py"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+precision = 2

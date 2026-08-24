@@ -1,9 +1,9 @@
 import hashlib
 import struct
-from pathlib import Path
-from src.esp_parser import parse_esp_file, MasterResolver, RecordKey, _resolve_record_key
+
+from src.esp_parser import MasterResolver, _resolve_record_key, parse_esp_file
+from src.free_translator import _protect_glossary, _resolve_lang_code, _restore_glossary, translate_free_text_sync
 from src.voice_mapper import resolve_voice_for_entry
-from src.free_translator import translate_free_text_sync, _protect_glossary, _restore_glossary, _resolve_lang_code
 
 
 def make_subrecord(s_type: bytes, payload: bytes) -> bytes:
@@ -83,6 +83,7 @@ def test_free_translator_glossary(monkeypatch):
 def test_free_translator_error_propagation(monkeypatch):
     import urllib.error
     import urllib.request
+
     import pytest
 
     def mock_urlopen_fail(req, timeout=10):
@@ -101,19 +102,19 @@ def test_free_translator_language_glossary_isolation():
     assert _resolve_lang_code("spanish") == "es"
 
     # French: must NOT insert "Sangre de Dragón" or "Carrera Blanca"
-    french_text, french_repl = _protect_glossary("The Dragonborn arrived at Whiterun.", target_lang="French")
-    for placeholder, term in french_repl.items():
+    _french_text, french_repl = _protect_glossary("The Dragonborn arrived at Whiterun.", target_lang="French")
+    for _placeholder, term in french_repl.items():
         assert term in {"Dragonborn", "Whiterun"}
         assert term not in {"Sangre de Dragón", "Carrera Blanca"}
 
     # German: must NOT insert Spanish
-    german_text, german_repl = _protect_glossary("The Jarl of Windhelm spoke.", target_lang="German")
-    for placeholder, term in german_repl.items():
+    _german_text, german_repl = _protect_glossary("The Jarl of Windhelm spoke.", target_lang="German")
+    for _placeholder, term in german_repl.items():
         assert term in {"Jarl", "Windhelm"}
         assert term not in {"Ventalia"}
 
     # Spanish: MUST insert Spanish lore terms
-    es_text, es_repl = _protect_glossary("The Dragonborn arrived at Whiterun.", target_lang="Spanish")
+    _es_text, es_repl = _protect_glossary("The Dragonborn arrived at Whiterun.", target_lang="Spanish")
     es_values = set(es_repl.values())
     assert "Sangre de Dragón" in es_values
     assert "Carrera Blanca" in es_values
@@ -138,18 +139,15 @@ def test_esp_parser_local_speaker_resolution(tmp_path):
 
     # 2. NPC_ record: FormID 0x00020002 with EDID "LydiaNPC", FULL "Lydia", and VTCK 0x00010001
     npc_body = (
-        make_subrecord(b"EDID", b"LydiaNPC\x00") +
-        make_subrecord(b"FULL", b"Lydia\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00010001))
+        make_subrecord(b"EDID", b"LydiaNPC\x00")
+        + make_subrecord(b"FULL", b"Lydia\x00")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x00010001))
     )
     npc_rec = make_record(b"NPC_", 0x00020002, npc_body)
 
     # 3. INFO record: FormID 0x00030003 with ANAM 0x00020002 (Lydia) and NAM1 dialogue text
     text = b"I am sworn to carry your burdens.\x00"
-    info_body = (
-        make_subrecord(b"ANAM", struct.pack("<I", 0x00020002)) +
-        make_subrecord(b"NAM1", text)
-    )
+    info_body = make_subrecord(b"ANAM", struct.pack("<I", 0x00020002)) + make_subrecord(b"NAM1", text)
     info_rec = make_record(b"INFO", 0x00030003, info_body)
 
     total_recs = vtyp_rec + npc_rec + info_rec
@@ -176,9 +174,9 @@ def test_esp_parser_skyrim_master_speaker_resolution(tmp_path):
     vtyp_rec = make_record(b"VTYP", 0x00013AD8, vtyp_body)
 
     npc_body = (
-        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
-        make_subrecord(b"FULL", b"Jarl Balgruuf\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00")
+        + make_subrecord(b"FULL", b"Jarl Balgruuf\x00")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
     )
     npc_rec = make_record(b"NPC_", 0x0001A697, npc_body)
     skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + npc_rec))
@@ -186,10 +184,7 @@ def test_esp_parser_skyrim_master_speaker_resolution(tmp_path):
     # 2. Create target mod: WhiterunQuest.esp declaring MAST Skyrim.esm
     mod_esp = tmp_path / "WhiterunQuest.esp"
     info_text = b"Whiterun stands strong with the Empire.\x00"
-    info_body = (
-        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
-        make_subrecord(b"NAM1", info_text)
-    )
+    info_body = make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) + make_subrecord(b"NAM1", info_text)
     info_rec = make_record(b"INFO", 0x01000050, info_body)
     mod_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", info_rec))
 
@@ -224,9 +219,9 @@ def test_esp_parser_transitive_master_speaker_resolution(tmp_path):
     # 2. Intermediate Master: Update.esm (declares Skyrim.esm as master #0)
     update_esm = tmp_path / "Update.esm"
     npc_body = (
-        make_subrecord(b"EDID", b"UpdateGuardNPC\x00") +
-        make_subrecord(b"FULL", b"Update Guard\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))  # points to Skyrim.esm:0x013AD8
+        make_subrecord(b"EDID", b"UpdateGuardNPC\x00")
+        + make_subrecord(b"FULL", b"Update Guard\x00")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))  # points to Skyrim.esm:0x013AD8
     )
     npc_rec = make_record(b"NPC_", 0x01000999, npc_body)
     update_esm.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"NPC_", npc_rec))
@@ -234,8 +229,8 @@ def test_esp_parser_transitive_master_speaker_resolution(tmp_path):
     # 3. Target Plugin: MyMod.esp (declares Skyrim.esm as #0 and Update.esm as #1)
     mymod_esp = tmp_path / "MyMod.esp"
     info_body = (
-        make_subrecord(b"ANAM", struct.pack("<I", 0x01000999)) +  # points to Update.esm:0x000999
-        make_subrecord(b"NAM1", b"I received new orders from the capital.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x01000999))  # points to Update.esm:0x000999
+        + make_subrecord(b"NAM1", b"I received new orders from the capital.\x00")
     )
     info_rec = make_record(b"INFO", 0x02000050, info_body)
     mymod_esp.write_bytes(make_tes4_header(["Skyrim.esm", "Update.esm"]) + make_grup(b"INFO", info_rec))
@@ -264,9 +259,9 @@ def test_esp_parser_third_party_master_resolution(tmp_path):
     custom_esm = masters_dir / "CustomMaster.esm"
     vtyp_rec = make_record(b"VTYP", 0x00005001, make_subrecord(b"EDID", b"FemaleSultry\x00"))
     npc_body = (
-        make_subrecord(b"EDID", b"SeraphinaNPC\x00") +
-        make_subrecord(b"FULL", b"Seraphina\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00005001))
+        make_subrecord(b"EDID", b"SeraphinaNPC\x00")
+        + make_subrecord(b"FULL", b"Seraphina\x00")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x00005001))
     )
     npc_rec = make_record(b"NPC_", 0x00007002, npc_body)
     custom_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + npc_rec))
@@ -274,9 +269,8 @@ def test_esp_parser_third_party_master_resolution(tmp_path):
     # 3. Target plugin in tmp_path (different folder), passing master_search_paths
     target_esp = tmp_path / "TargetMod.esp"
     # ANAM has high byte 0x01 pointing to CustomMaster.esm (master index 1)
-    info_body = (
-        make_subrecord(b"ANAM", struct.pack("<I", 0x01007002)) +
-        make_subrecord(b"NAM1", b"Care to have a drink with me?\x00")
+    info_body = make_subrecord(b"ANAM", struct.pack("<I", 0x01007002)) + make_subrecord(
+        b"NAM1", b"Care to have a drink with me?\x00"
     )
     info_rec = make_record(b"INFO", 0x02000010, info_body)
     target_esp.write_bytes(make_tes4_header(["Skyrim.esm", "CustomMaster.esm"]) + make_grup(b"INFO", info_rec))
@@ -300,7 +294,7 @@ def test_esp_parser_master_object_id_collision_isolation(tmp_path):
     npc_a = make_record(
         b"NPC_",
         0x00001234,
-        make_subrecord(b"EDID", b"Alice\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000001))
+        make_subrecord(b"EDID", b"Alice\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000001)),
     )
     master_a.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_a + npc_a))
 
@@ -310,7 +304,7 @@ def test_esp_parser_master_object_id_collision_isolation(tmp_path):
     npc_b = make_record(
         b"NPC_",
         0x00001234,
-        make_subrecord(b"EDID", b"Bob\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000002))
+        make_subrecord(b"EDID", b"Bob\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000002)),
     )
     master_b.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_b + npc_b))
 
@@ -320,15 +314,14 @@ def test_esp_parser_master_object_id_collision_isolation(tmp_path):
     info_a = make_record(
         b"INFO",
         0x02000001,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x00001234)) +
-        make_subrecord(b"NAM1", b"I am Alice from MasterA.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00001234))
+        + make_subrecord(b"NAM1", b"I am Alice from MasterA.\x00"),
     )
     # Line 2 spoken by MasterB NPC (mod_index 1)
     info_b = make_record(
         b"INFO",
         0x02000002,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x01001234)) +
-        make_subrecord(b"NAM1", b"I am Bob from MasterB.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x01001234)) + make_subrecord(b"NAM1", b"I am Bob from MasterB.\x00"),
     )
     target_esp.write_bytes(make_tes4_header(["MasterA.esm", "MasterB.esm"]) + make_grup(b"INFO", info_a + info_b))
 
@@ -348,9 +341,8 @@ def test_esp_parser_missing_master_safe_fallback(tmp_path):
     and must cleanly result in voice_type is None.
     """
     mod_esp = tmp_path / "MissingMasterMod.esp"
-    info_body = (
-        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
-        make_subrecord(b"NAM1", b"Where is my master file?\x00")
+    info_body = make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) + make_subrecord(
+        b"NAM1", b"Where is my master file?\x00"
     )
     info_rec = make_record(b"INFO", 0x01000006, info_body)
     # Declares NonExistentMaster.esm which is absent on disk
@@ -374,9 +366,9 @@ def test_esp_parser_invalid_master_index(tmp_path):
     local_npc = make_record(
         b"NPC_",
         0x01000555,
-        make_subrecord(b"EDID", b"LocalGuard\x00") +
-        make_subrecord(b"FULL", b"Local Guard\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x01000111))
+        make_subrecord(b"EDID", b"LocalGuard\x00")
+        + make_subrecord(b"FULL", b"Local Guard\x00")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x01000111)),
     )
     local_vtyp = make_record(b"VTYP", 0x01000111, make_subrecord(b"EDID", b"MaleGuard\x00"))
 
@@ -384,13 +376,11 @@ def test_esp_parser_invalid_master_index(tmp_path):
     info_rec = make_record(
         b"INFO",
         0x01000999,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x08000555)) +
-        make_subrecord(b"NAM1", b"I have an invalid index.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x08000555))
+        + make_subrecord(b"NAM1", b"I have an invalid index.\x00"),
     )
 
-    mod_esp.write_bytes(
-        make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", local_vtyp + local_npc + info_rec)
-    )
+    mod_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", local_vtyp + local_npc + info_rec))
 
     resolved_key = _resolve_record_key(0x08000555, "InvalidIndexMod.esp", ["Skyrim.esm"])
     assert resolved_key is None
@@ -411,7 +401,7 @@ def test_esp_parser_master_read_only_immutability(tmp_path):
     npc_rec = make_record(
         b"NPC_",
         0x00000020,
-        make_subrecord(b"EDID", b"ElfNPC\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000010))
+        make_subrecord(b"EDID", b"ElfNPC\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000010)),
     )
     master_path.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + npc_rec))
 
@@ -424,8 +414,8 @@ def test_esp_parser_master_read_only_immutability(tmp_path):
     info_rec = make_record(
         b"INFO",
         0x01000001,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x00000020)) +
-        make_subrecord(b"NAM1", b"Testing read-only access.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00000020))
+        + make_subrecord(b"NAM1", b"Testing read-only access.\x00"),
     )
     mod_esp.write_bytes(make_tes4_header(["ImmutableMaster.esm"]) + make_grup(b"INFO", info_rec))
 
@@ -451,16 +441,15 @@ def test_esp_parser_master_cache_single_parse(tmp_path, monkeypatch):
     npc_rec = make_record(
         b"NPC_",
         0x00000006,
-        make_subrecord(b"EDID", b"Commander\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000005))
+        make_subrecord(b"EDID", b"Commander\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000005)),
     )
     master_path.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + npc_rec))
 
     # Build 500 INFO records in target mod
     info_recs = b""
     for i in range(500):
-        info_body = (
-            make_subrecord(b"ANAM", struct.pack("<I", 0x00000006)) +
-            make_subrecord(b"NAM1", f"Order number {i}\x00".encode("utf-8"))
+        info_body = make_subrecord(b"ANAM", struct.pack("<I", 0x00000006)) + make_subrecord(
+            b"NAM1", f"Order number {i}\x00".encode()
         )
         info_recs += make_record(b"INFO", 0x01000000 + i, info_body)
 
@@ -510,9 +499,8 @@ def test_esp_parser_esl_light_plugin_explicit_handling(tmp_path):
     assert rec_key is None
 
     mod_esp = tmp_path / "LightMod.esp"
-    info_body = (
-        make_subrecord(b"ANAM", struct.pack("<I", 0xFE001001)) +
-        make_subrecord(b"NAM1", b"Spoken by a light plugin NPC.\x00")
+    info_body = make_subrecord(b"ANAM", struct.pack("<I", 0xFE001001)) + make_subrecord(
+        b"NAM1", b"Spoken by a light plugin NPC.\x00"
     )
     info_rec = make_record(b"INFO", 0x01000001, info_body)
     mod_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", info_rec))
@@ -544,9 +532,9 @@ def test_esp_parser_origin_record_resolution_no_mast_override(tmp_path):
     npc_skyrim = make_record(
         b"NPC_",
         0x0001A697,
-        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
-        make_subrecord(b"FULL", b"Jarl Balgruuf\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00")
+        + make_subrecord(b"FULL", b"Jarl Balgruuf\x00")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8)),
     )
     skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_skyrim + npc_skyrim))
 
@@ -556,17 +544,16 @@ def test_esp_parser_origin_record_resolution_no_mast_override(tmp_path):
     npc_patch_override = make_record(
         b"NPC_",
         0x0001A697,  # mod_index 0 -> points to Skyrim.esm:0x01A697
-        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
-        make_subrecord(b"FULL", b"Jarl Balgruuf (Patched)\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x01013ADA))
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00")
+        + make_subrecord(b"FULL", b"Jarl Balgruuf (Patched)\x00")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x01013ADA)),
     )
     patch_esm.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"NPC_", vtyp_patch + npc_patch_override))
 
     # 3. Target mod declaring Skyrim.esm and Patch.esm
     target_esp = tmp_path / "TargetMod.esp"
-    info_body = (
-        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
-        make_subrecord(b"NAM1", b"I speak with origin strength.\x00")
+    info_body = make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) + make_subrecord(
+        b"NAM1", b"I speak with origin strength.\x00"
     )
     info_rec = make_record(b"INFO", 0x02000001, info_body)
     target_esp.write_bytes(make_tes4_header(["Skyrim.esm", "Patch.esm"]) + make_grup(b"INFO", info_rec))
@@ -591,25 +578,24 @@ def test_esp_parser_local_tplt_resolution(tmp_path):
     template_npc = make_record(
         b"NPC_",
         0x00020001,
-        make_subrecord(b"EDID", b"BaseTemplateNPC\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00010001))
+        make_subrecord(b"EDID", b"BaseTemplateNPC\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00010001)),
     )
 
     # 3. Instance NPC: FormID 0x00020002 with TPLT 0x00020001 (NO direct VTCK)
     instance_npc = make_record(
         b"NPC_",
         0x00020002,
-        make_subrecord(b"EDID", b"InheritedNPC\x00") +
-        make_subrecord(b"FULL", b"Inherited Citizen\x00") +
-        make_subrecord(b"TPLT", struct.pack("<I", 0x00020001))
+        make_subrecord(b"EDID", b"InheritedNPC\x00")
+        + make_subrecord(b"FULL", b"Inherited Citizen\x00")
+        + make_subrecord(b"TPLT", struct.pack("<I", 0x00020001)),
     )
 
     # 4. INFO record spoken by Instance NPC
     info_rec = make_record(
         b"INFO",
         0x00030001,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x00020002)) +
-        make_subrecord(b"NAM1", b"I inherited my voice from a template.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00020002))
+        + make_subrecord(b"NAM1", b"I inherited my voice from a template.\x00"),
     )
 
     esp_path.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + template_npc + instance_npc + info_rec))
@@ -635,8 +621,7 @@ def test_esp_parser_master_tplt_resolution(tmp_path):
     base_npc = make_record(
         b"NPC_",
         0x01000100,
-        make_subrecord(b"EDID", b"MasterBaseTemplate\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
+        make_subrecord(b"EDID", b"MasterBaseTemplate\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8)),
     )
     master_a.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"NPC_", base_npc))
 
@@ -645,15 +630,14 @@ def test_esp_parser_master_tplt_resolution(tmp_path):
     mod_npc = make_record(
         b"NPC_",
         0x02000200,
-        make_subrecord(b"EDID", b"ModSoldier\x00") +
-        make_subrecord(b"FULL", b"Mod Soldier\x00") +
-        make_subrecord(b"TPLT", struct.pack("<I", 0x01000100))  # mod_index 1 -> MasterA.esm
+        make_subrecord(b"EDID", b"ModSoldier\x00")
+        + make_subrecord(b"FULL", b"Mod Soldier\x00")
+        + make_subrecord(b"TPLT", struct.pack("<I", 0x01000100)),  # mod_index 1 -> MasterA.esm
     )
     info_rec = make_record(
         b"INFO",
         0x02000300,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x02000200)) +
-        make_subrecord(b"NAM1", b"Ready for battle!\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x02000200)) + make_subrecord(b"NAM1", b"Ready for battle!\x00"),
     )
     target_esp.write_bytes(make_tes4_header(["Skyrim.esm", "MasterA.esm"]) + make_grup(b"INFO", mod_npc + info_rec))
 
@@ -674,26 +658,26 @@ def test_esp_parser_tplt_cycle_protection(tmp_path):
     npc_a = make_record(
         b"NPC_",
         0x00010001,
-        make_subrecord(b"EDID", b"CyclicA\x00") +
-        make_subrecord(b"FULL", b"Cyclic Actor A\x00") +
-        make_subrecord(b"TPLT", struct.pack("<I", 0x00010002))
+        make_subrecord(b"EDID", b"CyclicA\x00")
+        + make_subrecord(b"FULL", b"Cyclic Actor A\x00")
+        + make_subrecord(b"TPLT", struct.pack("<I", 0x00010002)),
     )
 
     # NPC B (0x00010002) -> TPLT NPC A (0x00010001)
     npc_b = make_record(
         b"NPC_",
         0x00010002,
-        make_subrecord(b"EDID", b"CyclicB\x00") +
-        make_subrecord(b"FULL", b"Cyclic Actor B\x00") +
-        make_subrecord(b"TPLT", struct.pack("<I", 0x00010001))
+        make_subrecord(b"EDID", b"CyclicB\x00")
+        + make_subrecord(b"FULL", b"Cyclic Actor B\x00")
+        + make_subrecord(b"TPLT", struct.pack("<I", 0x00010001)),
     )
 
     # INFO spoken by NPC A
     info_rec = make_record(
         b"INFO",
         0x00010003,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) +
-        make_subrecord(b"NAM1", b"I am stuck in an infinite template loop.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00010001))
+        + make_subrecord(b"NAM1", b"I am stuck in an infinite template loop.\x00"),
     )
 
     esp_path.write_bytes(make_tes4_header() + make_grup(b"NPC_", npc_a + npc_b + info_rec))
@@ -723,43 +707,32 @@ def test_esp_parser_localized_plugin_stringid_guard(tmp_path):
     npc1 = make_record(
         b"NPC_",
         0x00000010,
-        make_subrecord(b"EDID", b"GuardCommander\x00") +
-        make_subrecord(b"FULL", b"HERO") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00000001))
+        make_subrecord(b"EDID", b"GuardCommander\x00")
+        + make_subrecord(b"FULL", b"HERO")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x00000001)),
     )
 
     # NPC 2: FULL is 4 printable bytes (b"KING"), NO EDID
     npc2 = make_record(
-        b"NPC_",
-        0x00000020,
-        make_subrecord(b"FULL", b"KING") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00000001))
+        b"NPC_", 0x00000020, make_subrecord(b"FULL", b"KING") + make_subrecord(b"VTCK", struct.pack("<I", 0x00000001))
     )
 
-    master_path.write_bytes(
-        make_tes4_header([], flags=FLAG_LOCALIZED) +
-        make_grup(b"NPC_", vtyp_rec + npc1 + npc2)
-    )
+    master_path.write_bytes(make_tes4_header([], flags=FLAG_LOCALIZED) + make_grup(b"NPC_", vtyp_rec + npc1 + npc2))
 
     # 2. Target mod referencing the NPCs in the localized master
     esp_path = tmp_path / "MyMod.esp"
     info1 = make_record(
         b"INFO",
         0x01000001,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x00000010)) +
-        make_subrecord(b"NAM1", b"Order from commander.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00000010)) + make_subrecord(b"NAM1", b"Order from commander.\x00"),
     )
     info2 = make_record(
         b"INFO",
         0x01000002,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x00000020)) +
-        make_subrecord(b"NAM1", b"Royal decree.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x00000020)) + make_subrecord(b"NAM1", b"Royal decree.\x00"),
     )
 
-    esp_path.write_bytes(
-        make_tes4_header(["LocalizedMaster.esm"]) +
-        make_grup(b"INFO", info1 + info2)
-    )
+    esp_path.write_bytes(make_tes4_header(["LocalizedMaster.esm"]) + make_grup(b"INFO", info1 + info2))
 
     entries = parse_esp_file(esp_path)
     dialog1 = next(e for e in entries if e.form_id == "01000001")
@@ -788,9 +761,8 @@ def test_esp_parser_missing_master_repeated_warning_suppression(tmp_path, caplog
     # Build 500 INFO records in target mod pointing to an NPC in MissingMaster.esm
     info_recs = b""
     for i in range(500):
-        info_body = (
-            make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) +
-            make_subrecord(b"NAM1", f"Missing master line {i}\x00".encode("utf-8"))
+        info_body = make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) + make_subrecord(
+            b"NAM1", f"Missing master line {i}\x00".encode()
         )
         info_recs += make_record(b"INFO", 0x01000000 + i, info_body)
 
@@ -816,7 +788,8 @@ def test_esp_parser_missing_master_repeated_warning_suppression(tmp_path, caplog
     assert discovery_scan_count == 1, f"Expected 1 discovery scan, got {discovery_scan_count}"
 
     missing_warnings = [
-        rec.message for rec in caplog.records
+        rec.message
+        for rec in caplog.records
         if "missingmaster.esm" in rec.message.lower() and "could not be found" in rec.message
     ]
     assert len(missing_warnings) == 1, f"Expected exactly 1 missing master warning, got {len(missing_warnings)}"
@@ -843,9 +816,9 @@ def test_esp_parser_target_plugin_master_npc_override(tmp_path):
     vanilla_balgruuf = make_record(
         b"NPC_",
         0x0001A697,
-        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
-        make_subrecord(b"FULL", b"Jarl Balgruuf\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00")
+        + make_subrecord(b"FULL", b"Jarl Balgruuf\x00")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8)),
     )
     skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_male + vtyp_female + vanilla_balgruuf))
 
@@ -855,15 +828,14 @@ def test_esp_parser_target_plugin_master_npc_override(tmp_path):
     balgruuf_override = make_record(
         b"NPC_",
         0x0001A697,  # mod_index 0 -> Skyrim.esm
-        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
-        make_subrecord(b"FULL", b"Jarl Balgruuf Reborn\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD9))
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00")
+        + make_subrecord(b"FULL", b"Jarl Balgruuf Reborn\x00")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD9)),
     )
     info_rec = make_record(
         b"INFO",
         0x01000100,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
-        make_subrecord(b"NAM1", b"I have been reborn.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) + make_subrecord(b"NAM1", b"I have been reborn.\x00"),
     )
     target_mod.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", balgruuf_override + info_rec))
 
@@ -889,9 +861,8 @@ def test_esp_parser_corrupt_master_negative_cache(tmp_path, monkeypatch):
 
     info_recs = b""
     for i in range(500):
-        info_body = (
-            make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) +
-            make_subrecord(b"NAM1", f"Corrupt master line {i}\x00".encode("utf-8"))
+        info_body = make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) + make_subrecord(
+            b"NAM1", f"Corrupt master line {i}\x00".encode()
         )
         info_recs += make_record(b"INFO", 0x01000000 + i, info_body)
 
@@ -927,13 +898,11 @@ def test_esp_parser_warning_dedup_esl_and_invalid_index(tmp_path, caplog):
     # 500 ESL dialogs + 500 Invalid Index dialogs
     info_recs = b""
     for i in range(500):
-        info_esl = (
-            make_subrecord(b"ANAM", struct.pack("<I", 0xFE001001)) +
-            make_subrecord(b"NAM1", f"ESL line {i}\x00".encode("utf-8"))
+        info_esl = make_subrecord(b"ANAM", struct.pack("<I", 0xFE001001)) + make_subrecord(
+            b"NAM1", f"ESL line {i}\x00".encode()
         )
-        info_invalid = (
-            make_subrecord(b"ANAM", struct.pack("<I", 0x09001001)) +
-            make_subrecord(b"NAM1", f"Invalid index line {i}\x00".encode("utf-8"))
+        info_invalid = make_subrecord(b"ANAM", struct.pack("<I", 0x09001001)) + make_subrecord(
+            b"NAM1", f"Invalid index line {i}\x00".encode()
         )
         info_recs += make_record(b"INFO", 0x01000000 + i, info_esl)
         info_recs += make_record(b"INFO", 0x01001000 + i, info_invalid)
@@ -962,13 +931,13 @@ def test_esp_parser_localized_target_safety(tmp_path, caplog):
     a clear warning that localized string tables are unsupported.
     """
     import logging
+
     FLAG_LOCALIZED = 0x00000080
 
     mod_esp = tmp_path / "LocalizedPlugin.esp"
     # Create an INFO record where NAM1 is 4 bytes binary StringID 0x00010A3B
-    info_body = (
-        make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) +
-        make_subrecord(b"NAM1", struct.pack("<I", 0x00010A3B))
+    info_body = make_subrecord(b"ANAM", struct.pack("<I", 0x00010001)) + make_subrecord(
+        b"NAM1", struct.pack("<I", 0x00010A3B)
     )
     info_rec = make_record(b"INFO", 0x01000001, info_body)
     mod_esp.write_bytes(make_tes4_header([], flags=FLAG_LOCALIZED) + make_grup(b"INFO", info_rec))
@@ -996,9 +965,9 @@ def test_esp_parser_isolated_job_skyrim_data_resolution(tmp_path):
     npc_rec = make_record(
         b"NPC_",
         0x0001A697,
-        make_subrecord(b"EDID", b"JarlBalgruuf\x00") +
-        make_subrecord(b"FULL", b"Jarl Balgruuf\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8))
+        make_subrecord(b"EDID", b"JarlBalgruuf\x00")
+        + make_subrecord(b"FULL", b"Jarl Balgruuf\x00")
+        + make_subrecord(b"VTCK", struct.pack("<I", 0x00013AD8)),
     )
     skyrim_esm.write_bytes(make_tes4_header() + make_grup(b"NPC_", vtyp_rec + npc_rec))
 
@@ -1008,8 +977,8 @@ def test_esp_parser_isolated_job_skyrim_data_resolution(tmp_path):
     info_rec = make_record(
         b"INFO",
         0x01000001,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
-        make_subrecord(b"NAM1", b"Greetings from the Jarl.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697))
+        + make_subrecord(b"NAM1", b"Greetings from the Jarl.\x00"),
     )
     job_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", info_rec))
 
@@ -1029,22 +998,15 @@ def test_esp_parser_dialogue_hierarchy_t1_basic(tmp_path):
     dial_rec = make_record(
         b"DIAL",
         0x00002000,
-        make_subrecord(b"EDID", b"TG00Brynjolf\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+        make_subrecord(b"EDID", b"TG00Brynjolf\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001000)),
     )
-    info_body = (
-        make_subrecord(b"TRDT", bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0])) +
-        make_subrecord(b"NAM1", b"Never done an honest day's work, eh?\x00")
+    info_body = make_subrecord(b"TRDT", bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0])) + make_subrecord(
+        b"NAM1", b"Never done an honest day's work, eh?\x00"
     )
     info_rec = make_record(b"INFO", 0x000136C9, info_body)
     topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
 
-    esp_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust_rec) +
-        make_grup(b"DIAL", dial_rec) +
-        topic_grup
-    )
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", qust_rec) + make_grup(b"DIAL", dial_rec) + topic_grup)
 
     entries = parse_esp_file(esp_path)
     dialog = next(e for e in entries if e.is_dialog)
@@ -1065,36 +1027,31 @@ def test_esp_parser_dialogue_hierarchy_t2_one_quest_two_topics(tmp_path):
     dial_a = make_record(
         b"DIAL",
         0x00002001,
-        make_subrecord(b"EDID", b"MQ101RalofTopic\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+        make_subrecord(b"EDID", b"MQ101RalofTopic\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001000)),
     )
     dial_b = make_record(
         b"DIAL",
         0x00002002,
-        make_subrecord(b"EDID", b"MQ101HadvarTopic\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+        make_subrecord(b"EDID", b"MQ101HadvarTopic\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001000)),
     )
     info_a = make_record(
         b"INFO",
         0x00003001,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Hey you, you're finally awake.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"Hey you, you're finally awake.\x00"),
     )
     info_b = make_record(
         b"INFO",
         0x00003002,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Who are you? Step forward.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"Who are you? Step forward.\x00"),
     )
 
     grup_a = make_grup(struct.pack("<I", 0x00002001), info_a, grp_type=7)
     grup_b = make_grup(struct.pack("<I", 0x00002002), info_b, grp_type=7)
 
     esp_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust_rec) +
-        make_grup(b"DIAL", dial_a + dial_b) +
-        grup_a + grup_b
+        make_tes4_header() + make_grup(b"QUST", qust_rec) + make_grup(b"DIAL", dial_a + dial_b) + grup_a + grup_b
     )
 
     entries = parse_esp_file(esp_path)
@@ -1121,29 +1078,23 @@ def test_esp_parser_dialogue_hierarchy_t3_one_topic_multiple_infos(tmp_path):
     dial_rec = make_record(
         b"DIAL",
         0x00002000,
-        make_subrecord(b"EDID", b"WhiterunGuardHello\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+        make_subrecord(b"EDID", b"WhiterunGuardHello\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001000)),
     )
     info1 = make_record(
         b"INFO",
         0x00003010,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"I used to be an adventurer like you.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"I used to be an adventurer like you.\x00"),
     )
     info2 = make_record(
         b"INFO",
         0x00003020,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Let me guess, someone stole your sweetroll.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"Let me guess, someone stole your sweetroll.\x00"),
     )
     topic_grup = make_grup(struct.pack("<I", 0x00002000), info1 + info2, grp_type=7)
 
-    esp_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust_rec) +
-        make_grup(b"DIAL", dial_rec) +
-        topic_grup
-    )
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", qust_rec) + make_grup(b"DIAL", dial_rec) + topic_grup)
 
     entries = parse_esp_file(esp_path)
     dialogs = [e for e in entries if e.is_dialog]
@@ -1165,24 +1116,18 @@ def test_esp_parser_dialogue_hierarchy_t4_multi_response_info(tmp_path):
     dial_rec = make_record(
         b"DIAL",
         0x00002000,
-        make_subrecord(b"EDID", b"CW01TulliusSpeech\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+        make_subrecord(b"EDID", b"CW01TulliusSpeech\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001000)),
     )
     info_body = (
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"First sentence of the speech.\x00") +
-        make_subrecord(b"TRDT", bytes([0]*12 + [2] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Second sentence of the speech.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"First sentence of the speech.\x00")
+        + make_subrecord(b"TRDT", bytes([0] * 12 + [2] + [0] * 3))
+        + make_subrecord(b"NAM1", b"Second sentence of the speech.\x00")
     )
     info_rec = make_record(b"INFO", 0x00004000, info_body)
     topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
 
-    esp_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust_rec) +
-        make_grup(b"DIAL", dial_rec) +
-        topic_grup
-    )
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", qust_rec) + make_grup(b"DIAL", dial_rec) + topic_grup)
 
     entries = parse_esp_file(esp_path)
     dialogs = [e for e in entries if e.is_dialog]
@@ -1212,35 +1157,31 @@ def test_esp_parser_dialogue_hierarchy_t5_master_override(tmp_path):
     dial_rec = make_record(
         b"DIAL",
         0x00020000,
-        make_subrecord(b"EDID", b"DialogueWhiterunCarlottaIntro\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00010000))
+        make_subrecord(b"EDID", b"DialogueWhiterunCarlottaIntro\x00")
+        + make_subrecord(b"QNAM", struct.pack("<I", 0x00010000)),
     )
     info_rec = make_record(
         b"INFO",
         0x0006497C,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Original English text.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"Original English text.\x00"),
     )
     master_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust_rec) +
-        make_grup(b"DIAL", dial_rec) +
-        make_grup(struct.pack("<I", 0x00020000), info_rec, grp_type=7)
+        make_tes4_header()
+        + make_grup(b"QUST", qust_rec)
+        + make_grup(b"DIAL", dial_rec)
+        + make_grup(struct.pack("<I", 0x00020000), info_rec, grp_type=7)
     )
 
     child_path = tmp_path / "CarlottaSpanishPatch.esp"
     # Child overrides the INFO FormID 0x0006497C (master index 0 -> 0x0006497C)
-    override_body = (
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Texto traducido en espanol.\x00")
+    override_body = make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3)) + make_subrecord(
+        b"NAM1", b"Texto traducido en espanol.\x00"
     )
     override_rec = make_record(b"INFO", 0x0006497C, override_body)
     override_grup = make_grup(struct.pack("<I", 0x00020000), override_rec, grp_type=7)
 
-    child_path.write_bytes(
-        make_tes4_header(["Skyrim.esm"]) +
-        override_grup
-    )
+    child_path.write_bytes(make_tes4_header(["Skyrim.esm"]) + override_grup)
 
     entries = parse_esp_file(child_path, master_search_paths=[tmp_path])
     dialog = next(e for e in entries if e.is_dialog)
@@ -1253,6 +1194,7 @@ def test_esp_parser_dialogue_hierarchy_t5_master_override(tmp_path):
 
 # --- TES5 TOPIC CHILDREN GROUP REGRESSION TESTS (T-GRUP-1 to T-GRUP-5) ---
 
+
 def test_tes5_topic_children_group_type_7_association(tmp_path):
     """
     T-GRUP-1: Proves that TES5 Topic Children GRUP with group_type=7 and label=DIAL.FormID
@@ -1263,23 +1205,17 @@ def test_tes5_topic_children_group_type_7_association(tmp_path):
     dial_rec = make_record(
         b"DIAL",
         0x00002000,
-        make_subrecord(b"EDID", b"MyTopic\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+        make_subrecord(b"EDID", b"MyTopic\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001000)),
     )
     info_rec = make_record(
         b"INFO",
         0x00003000,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Hello from group type 7.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"Hello from group type 7.\x00"),
     )
     topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
 
-    esp_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust_rec) +
-        make_grup(b"DIAL", dial_rec) +
-        topic_grup
-    )
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", qust_rec) + make_grup(b"DIAL", dial_rec) + topic_grup)
 
     entries = parse_esp_file(esp_path)
     dialog = next(e for e in entries if e.is_dialog)
@@ -1297,24 +1233,18 @@ def test_tes5_group_type_5_not_interpreted_as_topic_children(tmp_path):
     dial_rec = make_record(
         b"DIAL",
         0x00002000,
-        make_subrecord(b"EDID", b"MyTopic\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+        make_subrecord(b"EDID", b"MyTopic\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001000)),
     )
     info_rec = make_record(
         b"INFO",
         0x00003000,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Orphaned line in type 5 group.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"Orphaned line in type 5 group.\x00"),
     )
     # Group type 5 (Exterior Cell Sub-Block)
     grup_type_5 = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=5)
 
-    esp_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust_rec) +
-        make_grup(b"DIAL", dial_rec) +
-        grup_type_5
-    )
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", qust_rec) + make_grup(b"DIAL", dial_rec) + grup_type_5)
 
     entries = parse_esp_file(esp_path)
     dialog = next(e for e in entries if e.is_dialog)
@@ -1333,36 +1263,29 @@ def test_tes5_two_type_7_groups_no_parent_leak(tmp_path):
     dial1 = make_record(
         b"DIAL",
         0x00002001,
-        make_subrecord(b"EDID", b"TopicOne\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001001))
+        make_subrecord(b"EDID", b"TopicOne\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001001)),
     )
     dial2 = make_record(
         b"DIAL",
         0x00002002,
-        make_subrecord(b"EDID", b"TopicTwo\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001002))
+        make_subrecord(b"EDID", b"TopicTwo\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001002)),
     )
     info1 = make_record(
         b"INFO",
         0x00003001,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Topic one line.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3)) + make_subrecord(b"NAM1", b"Topic one line.\x00"),
     )
     info2 = make_record(
         b"INFO",
         0x00003002,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Topic two line.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3)) + make_subrecord(b"NAM1", b"Topic two line.\x00"),
     )
 
     grup1 = make_grup(struct.pack("<I", 0x00002001), info1, grp_type=7)
     grup2 = make_grup(struct.pack("<I", 0x00002002), info2, grp_type=7)
 
     esp_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust1 + qust2) +
-        make_grup(b"DIAL", dial1 + dial2) +
-        grup1 + grup2
+        make_tes4_header() + make_grup(b"QUST", qust1 + qust2) + make_grup(b"DIAL", dial1 + dial2) + grup1 + grup2
     )
 
     entries = parse_esp_file(esp_path)
@@ -1385,30 +1308,22 @@ def test_tes5_type_7_group_master_dial_reference(tmp_path):
     dial_rec = make_record(
         b"DIAL",
         0x00020000,
-        make_subrecord(b"EDID", b"MasterTopic\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00010000))
+        make_subrecord(b"EDID", b"MasterTopic\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00010000)),
     )
-    master_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust_rec) +
-        make_grup(b"DIAL", dial_rec)
-    )
+    master_path.write_bytes(make_tes4_header() + make_grup(b"QUST", qust_rec) + make_grup(b"DIAL", dial_rec))
 
     child_path = tmp_path / "ChildMod.esp"
     # Child defines a new INFO under the master's DIAL 0x00020000
     info_rec = make_record(
         b"INFO",
         0x01003000,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"New child line under master topic.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"New child line under master topic.\x00"),
     )
     # Topic children group labeled with master's DIAL FormID (master index 0 -> 0x00020000)
     topic_grup = make_grup(struct.pack("<I", 0x00020000), info_rec, grp_type=7)
 
-    child_path.write_bytes(
-        make_tes4_header(["Skyrim.esm"]) +
-        topic_grup
-    )
+    child_path.write_bytes(make_tes4_header(["Skyrim.esm"]) + topic_grup)
 
     entries = parse_esp_file(child_path, master_search_paths=[tmp_path])
     dialog = next(e for e in entries if e.is_dialog)
@@ -1429,40 +1344,36 @@ def test_tes5_type_7_group_interleaved_unrelated_records(tmp_path):
     dial_real = make_record(
         b"DIAL",
         0x00002000,
-        make_subrecord(b"EDID", b"RealTopic\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+        make_subrecord(b"EDID", b"RealTopic\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001000)),
     )
     dial_unrelated = make_record(
         b"DIAL",
         0x00002999,
-        make_subrecord(b"EDID", b"UnrelatedProximityTopic\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001999))
+        make_subrecord(b"EDID", b"UnrelatedProximityTopic\x00")
+        + make_subrecord(b"QNAM", struct.pack("<I", 0x00001999)),
     )
     unrelated_npc = make_record(b"NPC_", 0x00005000, make_subrecord(b"EDID", b"DummyNPC\x00"))
     unrelated_book = make_record(
-        b"BOOK",
-        0x00006000,
-        make_subrecord(b"EDID", b"DummyBook\x00") +
-        make_subrecord(b"FULL", b"Book Title\x00")
+        b"BOOK", 0x00006000, make_subrecord(b"EDID", b"DummyBook\x00") + make_subrecord(b"FULL", b"Book Title\x00")
     )
     info_rec = make_record(
         b"INFO",
         0x00003000,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Strictly associated via GRUP label 0x00002000.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"Strictly associated via GRUP label 0x00002000.\x00"),
     )
     # The topic children group label explicitly points to RealTopic (0x00002000), even though
     # UnrelatedProximityTopic (0x00002999) was declared more recently.
     topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
 
     esp_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust_real) +
-        make_grup(b"DIAL", dial_real) +
-        make_grup(b"NPC_", unrelated_npc) +
-        make_grup(b"BOOK", unrelated_book) +
-        make_grup(b"DIAL", dial_unrelated) +  # Proximity trap
-        topic_grup
+        make_tes4_header()
+        + make_grup(b"QUST", qust_real)
+        + make_grup(b"DIAL", dial_real)
+        + make_grup(b"NPC_", unrelated_npc)
+        + make_grup(b"BOOK", unrelated_book)
+        + make_grup(b"DIAL", dial_unrelated)  # Proximity trap
+        + topic_grup
     )
 
     entries = parse_esp_file(esp_path)
@@ -1489,23 +1400,18 @@ def test_tes5_nested_dial_topic_children_realistic_layout(tmp_path):
     dial_rec = make_record(
         b"DIAL",
         0x00002000,
-        make_subrecord(b"EDID", b"TG00Brynjolf\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+        make_subrecord(b"EDID", b"TG00Brynjolf\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001000)),
     )
     info_rec = make_record(
         b"INFO",
         0x000136C9,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Never done an honest day's work, eh?\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"Never done an honest day's work, eh?\x00"),
     )
     topic_children_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
     dial_top_grup = make_grup(b"DIAL", dial_rec + topic_children_grup, grp_type=0)
 
-    esp_path.write_bytes(
-        make_tes4_header() +
-        qust_top_grup +
-        dial_top_grup
-    )
+    esp_path.write_bytes(make_tes4_header() + qust_top_grup + dial_top_grup)
 
     entries = parse_esp_file(esp_path)
     dialogs = [e for e in entries if e.is_dialog]
@@ -1528,23 +1434,17 @@ def test_esp_parser_info_without_anam_yields_none_voice_type(tmp_path):
     dial_rec = make_record(
         b"DIAL",
         0x00002000,
-        make_subrecord(b"EDID", b"MyTopic\x00") +
-        make_subrecord(b"QNAM", struct.pack("<I", 0x00001000))
+        make_subrecord(b"EDID", b"MyTopic\x00") + make_subrecord(b"QNAM", struct.pack("<I", 0x00001000)),
     )
     info_rec = make_record(
         b"INFO",
         0x00003000,
-        make_subrecord(b"TRDT", bytes([0]*12 + [1] + [0]*3)) +
-        make_subrecord(b"NAM1", b"Generic dialogue line without ANAM.\x00")
+        make_subrecord(b"TRDT", bytes([0] * 12 + [1] + [0] * 3))
+        + make_subrecord(b"NAM1", b"Generic dialogue line without ANAM.\x00"),
     )
     topic_grup = make_grup(struct.pack("<I", 0x00002000), info_rec, grp_type=7)
 
-    esp_path.write_bytes(
-        make_tes4_header() +
-        make_grup(b"QUST", qust_rec) +
-        make_grup(b"DIAL", dial_rec) +
-        topic_grup
-    )
+    esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", qust_rec) + make_grup(b"DIAL", dial_rec) + topic_grup)
 
     entries = parse_esp_file(esp_path)
     dialog = next(e for e in entries if e.is_dialog)

@@ -32,8 +32,8 @@ We introduce a lightweight, immutable record identifier:
 ```python
 @dataclass(frozen=True, slots=True)
 class RecordKey:
-    plugin: str    # Normalized lowercase plugin filename, e.g. "skyrim.esm"
-    object_id: int # 24-bit integer local object ID (form_id & 0x00FFFFFF)
+    plugin: str  # Normalized lowercase plugin filename, e.g. "skyrim.esm"
+    object_id: int  # 24-bit integer local object ID (form_id & 0x00FFFFFF)
 ```
 
 ### 2.2 Master Index Resolution Rules
@@ -88,11 +88,11 @@ Indexed per master file, storing only metadata required for VoiceType, Template,
 @dataclass
 class MasterIndexData:
     plugin_name: str
-    masters: list[str]                         # Declared MAST list in this master's TES4
-    npc_to_vtck: dict[RecordKey, int]          # RecordKey(NPC) -> raw uint32 VTCK FormID
-    npc_to_tplt: dict[RecordKey, int]          # RecordKey(NPC) -> raw uint32 TPLT FormID
-    npc_to_name: dict[RecordKey, str]          # RecordKey(NPC) -> FULL or EDID string
-    vtyp_to_edid: dict[RecordKey, str]         # RecordKey(VTYP) -> EDID string (e.g. "FemaleCommander")
+    masters: list[str]  # Declared MAST list in this master's TES4
+    npc_to_vtck: dict[RecordKey, int]  # RecordKey(NPC) -> raw uint32 VTCK FormID
+    npc_to_tplt: dict[RecordKey, int]  # RecordKey(NPC) -> raw uint32 TPLT FormID
+    npc_to_name: dict[RecordKey, str]  # RecordKey(NPC) -> FULL or EDID string
+    vtyp_to_edid: dict[RecordKey, str]  # RecordKey(VTYP) -> EDID string (e.g. "FemaleCommander")
 ```
 
 ### 3.2 `MasterResolver` & Two-Tier Read-Only Cache
@@ -104,11 +104,9 @@ class MasterResolver:
         self._path_cache: dict[tuple[Path, str], Path | None] = {}
         self._cache: dict[Path, MasterIndexData] = {}
 
-    def find_master_file(self, master_name: str, origin_dir: Path) -> Path | None:
-        ...
+    def find_master_file(self, master_name: str, origin_dir: Path) -> Path | None: ...
 
-    def get_or_load_master(self, master_name: str, origin_dir: Path) -> MasterIndexData | None:
-        ...
+    def get_or_load_master(self, master_name: str, origin_dir: Path) -> MasterIndexData | None: ...
 ```
 
 - **File Discovery & Cache:** Searches `[origin_dir] + self.search_paths` case-insensitively. The resolved path (or `None` if missing) is cached in `_path_cache` under `(origin_dir.resolve(), normalized_name)` to prevent redundant filesystem scans and warning spam.

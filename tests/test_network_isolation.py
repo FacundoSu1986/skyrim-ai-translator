@@ -20,12 +20,12 @@ Proves:
 """
 
 import http.client
-import io
-import json
 import os
+import re
 import socket
 import urllib.parse
 import urllib.request
+
 import pytest
 
 try:
@@ -39,19 +39,19 @@ from src.translator import create_openai_compatible_translator
 
 def test_arbitrary_hostname_dns_resolution_blocked():
     """Attempting DNS resolution for external hostnames must fail immediately."""
-    with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for 'example.invalid'"):
+    with pytest.raises(NetworkAccessDeniedError, match=re.escape("DNS resolution for 'example.invalid'")):
         socket.getaddrinfo("example.invalid", 80)
 
-    with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for 'api.openai.com'"):
+    with pytest.raises(NetworkAccessDeniedError, match=re.escape("DNS resolution for 'api.openai.com'")):
         socket.gethostbyname("api.openai.com")
 
-    with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for 'translate.googleapis.com'"):
+    with pytest.raises(NetworkAccessDeniedError, match=re.escape("DNS resolution for 'translate.googleapis.com'")):
         socket.gethostbyname_ex("translate.googleapis.com")
 
 
 def test_external_reverse_dns_blocked():
     """Attempting reverse DNS lookups for external IPs must fail without network resolution."""
-    with pytest.raises(NetworkAccessDeniedError, match="reverse DNS lookup for '8.8.8.8'"):
+    with pytest.raises(NetworkAccessDeniedError, match=re.escape("reverse DNS lookup for '8.8.8.8'")):
         socket.gethostbyaddr("8.8.8.8")
 
     with pytest.raises(NetworkAccessDeniedError, match="reverse DNS lookup for"):
@@ -75,10 +75,10 @@ def test_loopback_reverse_dns_allowed():
 
 def test_subdomain_spoofing_loopback_rejected():
     """Hostnames textually starting with '127.' must NOT be treated as loopback."""
-    with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for '127.example.com'"):
+    with pytest.raises(NetworkAccessDeniedError, match=re.escape("DNS resolution for '127.example.com'")):
         socket.getaddrinfo("127.example.com", 80)
 
-    with pytest.raises(NetworkAccessDeniedError, match="DNS resolution for '127.0.0.1.attacker.com'"):
+    with pytest.raises(NetworkAccessDeniedError, match=re.escape("DNS resolution for '127.0.0.1.attacker.com'")):
         socket.getaddrinfo("127.0.0.1.attacker.com", 80)
 
 
@@ -102,7 +102,7 @@ def test_unconnected_udp_sendto_external_ip_blocked():
     """UDP sendto targeting a literal external IP must be blocked without DNS lookups."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        with pytest.raises(NetworkAccessDeniedError, match="socket.sendto to"):
+        with pytest.raises(NetworkAccessDeniedError, match=r"socket\.sendto to"):
             sock.sendto(b"unauthorized payload", ("8.8.8.8", 53))
     finally:
         sock.close()
@@ -141,6 +141,7 @@ def test_urlopen_missing_hostname_or_non_http_blocked():
 
 def test_guarded_socket_sendmsg_and_sendto_single_execution_on_oserror(monkeypatch):
     """Verify that when real sendmsg/sendto raises OSError on an allowed connected peer, it executes exactly once."""
+
     class FakeConnectedSocket:
         def getpeername(self):
             return ("127.0.0.1", 8080)
@@ -209,7 +210,7 @@ def test_arbitrary_socket_connect_blocked_by_default():
     """Low-level socket.connect to external IP must fail immediately."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        with pytest.raises(NetworkAccessDeniedError, match="socket.connect to"):
+        with pytest.raises(NetworkAccessDeniedError, match=r"socket\.connect to"):
             sock.connect(("93.184.216.34", 80))
     finally:
         sock.close()
@@ -219,7 +220,7 @@ def test_arbitrary_socket_connect_ex_blocked_by_default():
     """Low-level socket.connect_ex to external IP must fail immediately."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        with pytest.raises(NetworkAccessDeniedError, match="socket.connect_ex to"):
+        with pytest.raises(NetworkAccessDeniedError, match=r"socket\.connect_ex to"):
             sock.connect_ex(("93.184.216.34", 80))
     finally:
         sock.close()
@@ -237,11 +238,14 @@ def test_raw_http_client_blocked_by_guard():
 
 def test_explicit_mock_allows_test_to_pass(monkeypatch):
     """Explicitly mocking urllib.request.urlopen takes precedence and executes cleanly."""
+
     class MockResponse:
         def read(self):
             return b'{"result": "mocked"}'
+
         def __enter__(self):
             return self
+
         def __exit__(self, *args):
             pass
 

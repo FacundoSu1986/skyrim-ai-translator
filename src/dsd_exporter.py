@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Union
+
 from src.models import StringEntry
 
 
@@ -34,10 +34,7 @@ class DSDDuplicateIdentityError(DSDExportError):
 # QUST CNAM, BOOK CNAM, CELL FULL, ...) are NOT announced as supported:
 # accepting them would promise contracts PR #6 does not complete (e.g. GMST
 # DATA additionally requires editor_id, which the exporter never emits).
-_FULL_RECORDS = (
-    "ACTI ALCH ARMO BOOK DIAL FLOR LCTN MESG MGEF MISC "
-    "NPC_ PERK QUST RACE SPEL WEAP"
-).split()
+_FULL_RECORDS = ("ACTI ALCH ARMO BOOK DIAL FLOR LCTN MESG MGEF MISC NPC_ PERK QUST RACE SPEL WEAP").split()
 
 _DESC_RECORDS = "ARMO BOOK MESG PERK RACE SPEL WEAP".split()
 
@@ -60,10 +57,12 @@ DSD_SUPPORTED_TYPES = frozenset(
 # DSD selects the exact string slot through "index" for these types.
 # A missing index is metadata loss: for INFO NAM1, DSD would silently
 # default it to 0 and collide with the real response 0.
-INDEX_REQUIRED_TYPES = frozenset({
-    "INFO NAM1",
-    "QUST NNAM",
-})
+INDEX_REQUIRED_TYPES = frozenset(
+    {
+        "INFO NAM1",
+        "QUST NNAM",
+    }
+)
 
 
 def _describe(entry: StringEntry) -> str:
@@ -91,16 +90,13 @@ def _validate_entry(entry: StringEntry) -> tuple[str, str, object]:
     dsd_type = f"{entry.record_type} {entry.subrecord_type}"
     if dsd_type not in DSD_SUPPORTED_TYPES:
         raise DSDUnsupportedTypeError(
-            f"{where}: type '{dsd_type}' cannot be represented by "
-            "Dynamic String Distributor 1.4.3"
+            f"{where}: type '{dsd_type}' cannot be represented by Dynamic String Distributor 1.4.3"
         )
 
     # Non-indexed types never carry an index, even if a stray one is present.
     index = entry.string_index if dsd_type in INDEX_REQUIRED_TYPES else None
     if dsd_type in INDEX_REQUIRED_TYPES and index is None:
-        raise DSDMetadataMissingError(
-            f"{where}: '{dsd_type}' requires a resolved string_index for DSD export"
-        )
+        raise DSDMetadataMissingError(f"{where}: '{dsd_type}' requires a resolved string_index for DSD export")
 
     canonical_form_id = f"0x{entry.local_object_id:06X}|{entry.defining_plugin}"
     return canonical_form_id, dsd_type, index
@@ -157,7 +153,7 @@ def validate_dsd_entries(entries: list[StringEntry]) -> None:
         seen[identity] = position
 
 
-def export_to_dsd(entries: list[StringEntry], output_file: Union[str, Path]) -> None:
+def export_to_dsd(entries: list[StringEntry], output_file: str | Path) -> None:
     """
     Exports translated StringEntry items to a Dynamic String Distributor
     (DSD) 1.4.3 JSON file: a root list of

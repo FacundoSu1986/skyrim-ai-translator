@@ -1,20 +1,19 @@
 from dataclasses import dataclass
-from typing import Optional
+
 
 @dataclass
 class StringEntry:
     form_id: str
     text: str
     is_dialog: bool = False
-    actor: Optional[str] = None
-    translated_text: Optional[str] = None
-    voice_type: Optional[str] = None
-    defining_plugin: Optional[str] = None
-    local_object_id: Optional[int] = None
-    record_type: Optional[str] = None
-    subrecord_type: Optional[str] = None
-    string_index: Optional[int] = None
-    editor_id: Optional[str] = None
-    quest_edid: Optional[str] = None
-    topic_edid: Optional[str] = None
-
+    actor: str | None = None
+    translated_text: str | None = None
+    voice_type: str | None = None
+    defining_plugin: str | None = None
+    local_object_id: int | None = None
+    record_type: str | None = None
+    subrecord_type: str | None = None
+    string_index: int | None = None
+    editor_id: str | None = None
+    quest_edid: str | None = None
+    topic_edid: str | None = None

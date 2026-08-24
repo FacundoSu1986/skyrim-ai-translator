@@ -24,17 +24,16 @@ from pathlib import Path
 from src.models import StringEntry
 from src.parser import parse_strings_file
 
+
 def test_parse_strings_file(tmp_path):
     # Setup mock data
-    mock_data = [
-        {"FormID": "00012345", "Text": "Hello there", "IsDialog": True, "Actor": "Guard"}
-    ]
+    mock_data = [{"FormID": "00012345", "Text": "Hello there", "IsDialog": True, "Actor": "Guard"}]
     file_path = tmp_path / "strings.json"
     file_path.write_text(json.dumps(mock_data))
-    
+
     # Execute
     result = parse_strings_file(str(file_path))
-    
+
     # Assert
     assert len(result) == 1
     assert isinstance(result[0], StringEntry)
@@ -56,6 +55,7 @@ Expected: FAIL with "ModuleNotFoundError" or "ImportError" for src.models.
 from dataclasses import dataclass
 from typing import Optional
 
+
 @dataclass
 class StringEntry:
     form_id: str
@@ -64,21 +64,20 @@ class StringEntry:
     actor: Optional[str] = None
     translated_text: Optional[str] = None
 
+
 # src/parser.py
 import json
 from src.models import StringEntry
 
+
 def parse_strings_file(filepath: str) -> list[StringEntry]:
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, "r", encoding="utf-8") as f:
         data = json.load(f)
-        
+
     entries = []
     for item in data:
         entry = StringEntry(
-            form_id=item["FormID"],
-            text=item["Text"],
-            is_dialog=item.get("IsDialog", False),
-            actor=item.get("Actor")
+            form_id=item["FormID"], text=item["Text"], is_dialog=item.get("IsDialog", False), actor=item.get("Actor")
         )
         entries.append(entry)
     return entries

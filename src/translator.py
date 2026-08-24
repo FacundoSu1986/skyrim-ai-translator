@@ -1,17 +1,18 @@
 import asyncio
-from enum import Enum
 import json
 import logging
-from dataclasses import replace
-from typing import Awaitable, Callable, List, Optional
-import urllib.request
 import urllib.error
+import urllib.request
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
+from enum import StrEnum
+
 from src.models import StringEntry
 
 logger = logging.getLogger(__name__)
 
 
-class TranslationProvider(str, Enum):
+class TranslationProvider(StrEnum):
     """
     Identificadores de proveedores de traducción soportados.
 
@@ -25,9 +26,11 @@ class TranslationProvider(str, Enum):
     - UNOFFICIAL_GTX: Endpoint no autenticado de Google Translate. Deprecado, sin SLA,
       sin garantía de estabilidad y sujeto a límites no documentados de términos de servicio.
     """
+
     OPENAI_COMPATIBLE = "openai_compatible"
     OLLAMA = "ollama"
     UNOFFICIAL_GTX = "unofficial_gtx"
+
 
 # Official Skyrim Spanish localization glossary
 SKYRIM_GLOSSARY = {
@@ -84,11 +87,11 @@ def build_skyrim_system_prompt(target_lang: str = "Spanish") -> str:
     """
     if _is_spanish(target_lang):
         glossary_items = "\n".join(f"- {eng} -> {esp}" for eng, esp in SKYRIM_GLOSSARY.items())
-        glossary_clause = f"1. Respeta estrictamente el lore y el siguiente glosario oficial de Skyrim:\n{glossary_items}\n"
-    else:
         glossary_clause = (
-            f"1. Translate accurately into {target_lang}, preserving canonical Bethesda names, locations, and titles in their standard official {target_lang} or fantasy forms.\n"
+            f"1. Respeta estrictamente el lore y el siguiente glosario oficial de Skyrim:\n{glossary_items}\n"
         )
+    else:
+        glossary_clause = f"1. Translate accurately into {target_lang}, preserving canonical Bethesda names, locations, and titles in their standard official {target_lang} or fantasy forms.\n"
 
     return (
         f"Eres un traductor experto y localizador profesional para The Elder Scrolls V: Skyrim.\n"
@@ -115,15 +118,13 @@ def create_openai_compatible_translator(
     target_lang: str = "Spanish",
 ) -> Callable[[str, str], Awaitable[str]]:
     """Creates an async translation callable targeting any OpenAI-compatible API (OpenAI, DeepSeek, Groq, Ollama, OpenRouter)."""
+
     async def _call(text: str, context: str) -> str:
         if not api_key and "localhost" not in api_base and "127.0.0.1" not in api_base:
             raise RuntimeError("Se requiere api_key para usar una API remota compatible con OpenAI")
 
         url = f"{api_base.rstrip('/')}/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}" if api_key else ""
-        }
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}" if api_key else ""}
 
         # Extract target_lang dynamically if provided in context
         eff_target_lang = target_lang
@@ -137,15 +138,15 @@ def create_openai_compatible_translator(
             "model": model,
             "messages": [
                 {"role": "system", "content": build_skyrim_system_prompt(eff_target_lang)},
-                {"role": "user", "content": f"{context}\nTexto a traducir:\n{text}"}
+                {"role": "user", "content": f"{context}\nTexto a traducir:\n{text}"},
             ],
-            "temperature": 0.3
+            "temperature": 0.3,
         }
 
         def _request_sync():
-            req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method="POST")
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
+                data = json.loads(resp.read().decode("utf-8"))
                 return data["choices"][0]["message"]["content"].strip()
 
         try:
@@ -158,11 +159,11 @@ def create_openai_compatible_translator(
 
 
 async def translate_entries(
-    entries: List[StringEntry],
+    entries: list[StringEntry],
     target_lang: str = "Spanish",
     api_callable: Callable[[str, str], Awaitable[str]] = default_llm_call,
-    concurrency_limit: int = 10
-) -> List[StringEntry]:
+    concurrency_limit: int = 10,
+) -> list[StringEntry]:
     """
     Translates a list of StringEntry records concurrently with strict Fail-Fast semantics.
     Raises RuntimeError immediately if any translation fails, preventing corrupted/partial exports.

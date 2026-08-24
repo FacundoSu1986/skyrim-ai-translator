@@ -9,7 +9,7 @@ Pure logic only:
 
 import struct
 from pathlib import Path
-from typing import Optional
+
 from src.models import StringEntry
 
 
@@ -18,11 +18,18 @@ class VoiceAssetMetadataError(ValueError):
 
 
 _WINDOWS_RESERVED_NAMES = {
-    "CON", "PRN", "AUX", "NUL",
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
-    "COM¹", "COM²", "COM³",
-    "LPT¹", "LPT²", "LPT³",
+    "COM¹",
+    "COM²",
+    "COM³",
+    "LPT¹",
+    "LPT²",
+    "LPT³",
 }
 _WINDOWS_FORBIDDEN_CHARS = set('<>:"/\\|?*')
 
@@ -55,34 +62,24 @@ def _validate_path_component(comp: str, field_name: str) -> None:
     for c in comp:
         code = ord(c)
         if code < 32:
-            raise VoiceAssetMetadataError(
-                f"{field_name} contains forbidden ASCII control character ({code}): {comp!r}"
-            )
+            raise VoiceAssetMetadataError(f"{field_name} contains forbidden ASCII control character ({code}): {comp!r}")
         if c in _WINDOWS_FORBIDDEN_CHARS:
-            raise VoiceAssetMetadataError(
-                f"{field_name} contains forbidden Windows character '{c}': {comp!r}"
-            )
+            raise VoiceAssetMetadataError(f"{field_name} contains forbidden Windows character '{c}': {comp!r}")
 
     if comp in {".", ".."}:
-        raise VoiceAssetMetadataError(
-            f"{field_name} contains relative directory traversal '..': {comp!r}"
-        )
+        raise VoiceAssetMetadataError(f"{field_name} contains relative directory traversal '..': {comp!r}")
 
     try:
         component_units = _windows_utf16_units(comp)
     except UnicodeEncodeError as exc:
-        raise VoiceAssetMetadataError(
-            f"{field_name} contains invalid Unicode surrogate data"
-        ) from exc
+        raise VoiceAssetMetadataError(f"{field_name} contains invalid Unicode surrogate data") from exc
 
     if component_units > _WINDOWS_MAX_COMPONENT_UNITS:
         raise VoiceAssetMetadataError(f"{field_name} exceeds Windows component length limit")
 
     stem = comp.split(".")[0].upper()
     if stem in _WINDOWS_RESERVED_NAMES:
-        raise VoiceAssetMetadataError(
-            f"{field_name} uses reserved Windows device name: {comp!r}"
-        )
+        raise VoiceAssetMetadataError(f"{field_name} uses reserved Windows device name: {comp!r}")
 
 
 def build_voice_basename(
@@ -111,7 +108,9 @@ def build_voice_basename(
     if quest_edid is None or not isinstance(quest_edid, str):
         raise VoiceAssetMetadataError(f"quest_edid must be a string, got {type(quest_edid).__name__}")
     if topic_edid is None or not isinstance(topic_edid, str):
-        raise VoiceAssetMetadataError(f"topic_edid must be a string (or empty string ''), got {type(topic_edid).__name__}")
+        raise VoiceAssetMetadataError(
+            f"topic_edid must be a string (or empty string ''), got {type(topic_edid).__name__}"
+        )
 
     if not isinstance(local_object_id, int) or local_object_id < 0 or local_object_id > 0xFFFFFF:
         raise VoiceAssetMetadataError(
@@ -132,7 +131,7 @@ def build_voice_basename(
             q = q[:10]
             d = d[:15]
         else:
-            d = d[:25 - len(q)]
+            d = d[: 25 - len(q)]
 
     basename = f"{q}_{d}_{fid8}_{response_number}"
     _validate_path_component(basename, "basename")
@@ -188,7 +187,9 @@ def validate_voice_asset_entry(entry: StringEntry) -> None:
         raise VoiceAssetMetadataError(f"StringEntry FormID {entry.form_id} is missing local_object_id")
 
     if entry.string_index is None:
-        raise VoiceAssetMetadataError(f"StringEntry FormID {entry.form_id} is missing string_index (TRDT response number)")
+        raise VoiceAssetMetadataError(
+            f"StringEntry FormID {entry.form_id} is missing string_index (TRDT response number)"
+        )
 
     if entry.quest_edid is None:
         raise VoiceAssetMetadataError(f"StringEntry FormID {entry.form_id} has unresolved quest_edid (None)")
@@ -240,8 +241,8 @@ def unpack_fuz(fuz_bytes: bytes) -> tuple[bytes, bytes]:
             f"Truncated FUZ payload: declared LIP size {lip_size} bytes, total buffer {total_len} bytes"
         )
 
-    lip_payload = bytes(fuz_bytes[12:12+lip_size])
-    audio_payload = bytes(fuz_bytes[12+lip_size:])
+    lip_payload = bytes(fuz_bytes[12 : 12 + lip_size])
+    audio_payload = bytes(fuz_bytes[12 + lip_size :])
 
     if len(lip_payload) == 0:
         raise VoiceAssetMetadataError("FUZ container contains zero-length LIP stream")

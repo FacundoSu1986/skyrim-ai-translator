@@ -3,20 +3,22 @@ Hermetic test suite for pure deterministic Skyrim voice asset identity and FUZ p
 """
 
 from pathlib import Path
+
 import pytest
+
 from src.models import StringEntry
 from src.voice_assets import (
-    _validate_path_component,
     VoiceAssetMetadataError,
+    _validate_path_component,
     build_voice_basename,
     build_voice_relative_path,
-    validate_voice_asset_entry,
     pack_fuz,
     unpack_fuz,
+    validate_voice_asset_entry,
 )
 
-
 # --- 1. GOLDEN BASENAME TESTS ---
+
 
 def test_golden_basename_tg00():
     """TG00 + TG00Brynjolf + 0x0136C9 + 1 -> TG00_TG00Brynjolf_000136C9_1"""
@@ -110,6 +112,7 @@ def test_golden_basename_invalid_inputs():
 
 # --- 2. RELATIVE PATH & SAFETY TESTS ---
 
+
 def test_build_voice_relative_path_basic():
     """Validates standard relative path generation."""
     rel = build_voice_relative_path(
@@ -132,86 +135,95 @@ def test_build_voice_relative_path_custom_plugin_and_wav():
     assert rel == Path("Sound/Voice/My Custom Mod.esp/FemaleCommander/MyQuest_MyTopic_00000800_1.wav")
 
 
-@pytest.mark.parametrize("bad_plugin", [
-    "../Skyrim.esm",
-    "dir/Skyrim.esm",
-    "dir\\Skyrim.esm",
-    "C:\\Skyrim.esm",
-    "Skyrim\x00.esm",
-    "",
-    "   ",
-    "..",
-    ".",
-    "CON",
-    "con",
-    "CON.txt",
-    "NUL.esp",
-    "PRN",
-    "COM1",
-    "com9",
-    "COM¹",
-    "com².txt",
-    "COM³.foo.bar",
-    "LPT¹",
-    "lpt².esp",
-    "LPT³.txt",
-    "LPT1",
-    "LPT9",
-    "BadPlugin.esp ",
-    "BadPlugin.esp.",
-    " BadPlugin.esp",
-    "Bad\x01Plugin.esp",
-    "Bad\x1FPlugin.esp",
-    "Bad<Plugin.esp",
-    "Bad>Plugin.esp",
-    "Bad:Plugin.esp",
-    'Bad"Plugin.esp',
-    "Bad|Plugin.esp",
-    "Bad?Plugin.esp",
-    "Bad*Plugin.esp",
-])
+@pytest.mark.parametrize(
+    "bad_plugin",
+    [
+        "../Skyrim.esm",
+        "dir/Skyrim.esm",
+        "dir\\Skyrim.esm",
+        "C:\\Skyrim.esm",
+        "Skyrim\x00.esm",
+        "",
+        "   ",
+        "..",
+        ".",
+        "CON",
+        "con",
+        "CON.txt",
+        "NUL.esp",
+        "PRN",
+        "COM1",
+        "com9",
+        "COM¹",
+        "com².txt",
+        "COM³.foo.bar",
+        "LPT¹",
+        "lpt².esp",
+        "LPT³.txt",
+        "LPT1",
+        "LPT9",
+        "BadPlugin.esp ",
+        "BadPlugin.esp.",
+        " BadPlugin.esp",
+        "Bad\x01Plugin.esp",
+        "Bad\x1fPlugin.esp",
+        "Bad<Plugin.esp",
+        "Bad>Plugin.esp",
+        "Bad:Plugin.esp",
+        'Bad"Plugin.esp',
+        "Bad|Plugin.esp",
+        "Bad?Plugin.esp",
+        "Bad*Plugin.esp",
+    ],
+)
 def test_path_safety_rejects_malicious_plugin(bad_plugin):
     with pytest.raises(VoiceAssetMetadataError):
         build_voice_relative_path(bad_plugin, "MaleNord", "TG00_TG00Brynjolf_000136C9_1")
 
 
-@pytest.mark.parametrize("bad_voice_type", [
-    "../MaleNord",
-    "Male/Nord",
-    "Male\\Nord",
-    "Male\x00Nord",
-    "C:MaleNord",
-    "",
-    "   ",
-    "Male?Nord",
-    "Male*Nord",
-    'Male"Nord',
-    "Male<Nord",
-    "Male>Nord",
-    "Male|Nord",
-    "CON",
-    "AUX",
-    "MaleNord ",
-    "MaleNord.",
-    " MaleNord",
-    "Male\x05Nord",
-])
+@pytest.mark.parametrize(
+    "bad_voice_type",
+    [
+        "../MaleNord",
+        "Male/Nord",
+        "Male\\Nord",
+        "Male\x00Nord",
+        "C:MaleNord",
+        "",
+        "   ",
+        "Male?Nord",
+        "Male*Nord",
+        'Male"Nord',
+        "Male<Nord",
+        "Male>Nord",
+        "Male|Nord",
+        "CON",
+        "AUX",
+        "MaleNord ",
+        "MaleNord.",
+        " MaleNord",
+        "Male\x05Nord",
+    ],
+)
 def test_path_safety_rejects_malicious_voice_type(bad_voice_type):
     with pytest.raises(VoiceAssetMetadataError):
         build_voice_relative_path("Skyrim.esm", bad_voice_type, "TG00_TG00Brynjolf_000136C9_1")
 
 
-@pytest.mark.parametrize(("valid_plugin", "valid_voice_type"), [
-    ("Skyrim.esm", "MaleNord"),
-    ("My..Mod.esp", "MaleNord"),
-    ("COM10", "MaleNord"),
-    ("LPT10", "MaleNord"),
-    ("Dawnguard.esm", "FemaleYoungEager"),
-    ("Dragonborn.esm", "MaleEvenToned"),
-    ("HearthFires.esm", "FemaleChild"),
-    ("My Custom Mod.esp", "FemaleCommander"),
-    ("Unofficial Skyrim Special Edition Patch.esp", "MaleBrute"),
-])
+@pytest.mark.parametrize(
+    ("valid_plugin", "valid_voice_type"),
+    [
+        ("Skyrim.esm", "MaleNord"),
+        ("My..Mod.esp", "MaleNord"),
+        ("COM10", "MaleNord"),
+        ("LPT10", "MaleNord"),
+        ("Dawnguard.esm", "FemaleYoungEager"),
+        ("Dragonborn.esm", "MaleEvenToned"),
+        ("HearthFires.esm", "FemaleChild"),
+        ("My Custom Mod.esp", "FemaleCommander"),
+        ("Unofficial Skyrim Special Edition Patch.esp", "MaleBrute"),
+    ],
+)
 def test_path_safety_preserves_valid_components(valid_plugin, valid_voice_type):
     rel = build_voice_relative_path(valid_plugin, valid_voice_type, "TG00_TG00Brynjolf_000136C9_1")
     assert rel == Path(f"Sound/Voice/{valid_plugin}/{valid_voice_type}/TG00_TG00Brynjolf_000136C9_1.fuz")
@@ -224,6 +236,7 @@ def test_path_safety_rejects_malicious_extension(bad_ext):
 
 
 # --- 3. MULTI-RESPONSE NON-COLLISION TEST ---
+
 
 def test_multi_response_non_collision():
     """
@@ -245,6 +258,7 @@ def test_multi_response_non_collision():
 
 
 # --- 4. STRINGENTRY VALIDATION ---
+
 
 def test_validate_voice_asset_entry_success():
     entry = StringEntry(
@@ -278,15 +292,18 @@ def test_validate_voice_asset_entry_empty_topic_allowed():
     validate_voice_asset_entry(entry)
 
 
-@pytest.mark.parametrize(("missing_field", "value"), [
-    ("is_dialog", False),
-    ("defining_plugin", None),
-    ("voice_type", None),
-    ("local_object_id", None),
-    ("string_index", None),
-    ("quest_edid", None),
-    ("topic_edid", None),
-])
+@pytest.mark.parametrize(
+    ("missing_field", "value"),
+    [
+        ("is_dialog", False),
+        ("defining_plugin", None),
+        ("voice_type", None),
+        ("local_object_id", None),
+        ("string_index", None),
+        ("quest_edid", None),
+        ("topic_edid", None),
+    ],
+)
 def test_validate_voice_asset_entry_fails_fast_on_missing_metadata(missing_field, value):
     kwargs = {
         "form_id": "000136C9",
@@ -307,6 +324,7 @@ def test_validate_voice_asset_entry_fails_fast_on_missing_metadata(missing_field
 
 
 # --- 5. FUZ BINARY PACKER & UNPACKER TESTS ---
+
 
 def test_pack_and_unpack_fuz_roundtrip():
     """Verifies complete structural roundtrip of FUZ container."""
@@ -336,17 +354,21 @@ def test_pack_fuz_rejects_empty_payloads():
         pack_fuz(b"lip", b"")
 
 
-@pytest.mark.parametrize("corrupted_bytes", [
-    b"",
-    b"FUZ",
-    b"NOT_FUZE_HEADER_DATA",
-    b"FUZE\x02\x00\x00\x00\x04\x00\x00\x001234AUDIO",  # Version 2
-    b"FUZE\x01\x00\x00\x00\x64\x00\x00\x00TRUNCATED",  # Declared lip 100 bytes, only 9 provided
-    b"FUZE\x01\x00\x00\x00\x04\x00\x00\x001234",  # Zero-length audio
-])
+@pytest.mark.parametrize(
+    "corrupted_bytes",
+    [
+        b"",
+        b"FUZ",
+        b"NOT_FUZE_HEADER_DATA",
+        b"FUZE\x02\x00\x00\x00\x04\x00\x00\x001234AUDIO",  # Version 2
+        b"FUZE\x01\x00\x00\x00\x64\x00\x00\x00TRUNCATED",  # Declared lip 100 bytes, only 9 provided
+        b"FUZE\x01\x00\x00\x00\x04\x00\x00\x001234",  # Zero-length audio
+    ],
+)
 def test_unpack_fuz_rejects_malformed_container(corrupted_bytes):
     with pytest.raises(VoiceAssetMetadataError):
         unpack_fuz(corrupted_bytes)
+
 
 def test_windows_component_length():
     # A. 255 ASCII characters as a standalone validated component -> accepted
@@ -374,9 +396,10 @@ def test_windows_component_length():
     # E. A basename that fits alone but basename + ".fuz" exceeds the component limit -> rejected.
     # 252 chars + ".fuz" (4 chars) = 256 chars
     basename_252 = "a" * 252
-    _validate_path_component(basename_252, "basename") # should not raise
+    _validate_path_component(basename_252, "basename")  # should not raise
     with pytest.raises(VoiceAssetMetadataError, match="filename exceeds Windows component length limit"):
         build_voice_relative_path("Skyrim.esm", "MaleNord", basename_252)
+
 
 def test_windows_component_invalid_surrogate():
     with pytest.raises(VoiceAssetMetadataError, match="plugin contains invalid Unicode surrogate data"):

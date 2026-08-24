@@ -14,8 +14,11 @@
    - Implement concurrent execution for `generate_voice_file` using `asyncio.gather`. Note: The user already made `translate_entries` awaited. Just fix the loop that generates voice files to run them concurrently.
    - Example snippet:
      ```python
-     tasks = [generate_voice_file(entry, str(output_voice_dir), tts_class=MockCommunicate) 
-              for entry in translated_entries if entry.is_dialog]
+     tasks = [
+         generate_voice_file(entry, str(output_voice_dir), tts_class=MockCommunicate)
+         for entry in translated_entries
+         if entry.is_dialog
+     ]
      await asyncio.gather(*tasks)
      ```
 

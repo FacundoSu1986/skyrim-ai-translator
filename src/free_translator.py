@@ -6,7 +6,8 @@ import threading
 import urllib.parse
 import urllib.request
 import warnings
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
+
 from src.translator import SKYRIM_GLOSSARY
 
 logger = logging.getLogger(__name__)
@@ -31,20 +32,16 @@ def _emit_gtx_deprecation_warning() -> None:
                 warnings.warn(msg, UserWarning, stacklevel=2)
                 logger.warning(msg)
 
+
 # Sort glossary keys by length descending to match composite terms before single words
 _SORTED_GLOSSARY = sorted(SKYRIM_GLOSSARY.items(), key=lambda item: len(item[0]), reverse=True)
 
 # One combined regex per glossary term, built once: term -> placeholder
 _PLACEHOLDER_RE = {
-    re.compile(re.escape(eng_term), re.IGNORECASE): f"__SKY_{i}__"
-    for i, (eng_term, _) in enumerate(_SORTED_GLOSSARY)
+    re.compile(re.escape(eng_term), re.IGNORECASE): f"__SKY_{i}__" for i, (eng_term, _) in enumerate(_SORTED_GLOSSARY)
 }
-_PLACEHOLDER_TO_ESP = {
-    f"__SKY_{i}__": esp_term for i, (_, esp_term) in enumerate(_SORTED_GLOSSARY)
-}
-_PLACEHOLDER_TO_ORIG = {
-    f"__SKY_{i}__": eng_term for i, (eng_term, _) in enumerate(_SORTED_GLOSSARY)
-}
+_PLACEHOLDER_TO_ESP = {f"__SKY_{i}__": esp_term for i, (_, esp_term) in enumerate(_SORTED_GLOSSARY)}
+_PLACEHOLDER_TO_ORIG = {f"__SKY_{i}__": eng_term for i, (eng_term, _) in enumerate(_SORTED_GLOSSARY)}
 
 _LANGUAGE_CODES = {
     "spanish": "es",
@@ -91,7 +88,9 @@ def _protect_glossary(text: str, target_lang: str = "Spanish") -> tuple[str, dic
     for pattern, placeholder in _PLACEHOLDER_RE.items():
         if pattern.search(text):
             text = pattern.sub(placeholder, text)
-            replacements[placeholder] = _PLACEHOLDER_TO_ESP[placeholder] if is_spanish else _PLACEHOLDER_TO_ORIG[placeholder]
+            replacements[placeholder] = (
+                _PLACEHOLDER_TO_ESP[placeholder] if is_spanish else _PLACEHOLDER_TO_ORIG[placeholder]
+            )
     return text, replacements
 
 
@@ -118,8 +117,7 @@ def translate_free_text_sync(text: str, target_lang: str = "Spanish") -> str:
     url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={lang_code}&dt=t&q={urllib.parse.quote(processed_text)}"
 
     req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "skyrim-ai-translator/1.0 (https://github.com/FacundoSu1986/skyrim-ai-translator)"}
+        url, headers={"User-Agent": "skyrim-ai-translator/1.0 (https://github.com/FacundoSu1986/skyrim-ai-translator)"}
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -134,8 +132,10 @@ def translate_free_text_sync(text: str, target_lang: str = "Spanish") -> str:
 
 def create_free_translator(target_lang: str = "Spanish") -> Callable[[str, str], Awaitable[str]]:
     """Creates a callable with fixed target_lang for translate_entries."""
+
     async def _call(text: str, context: str) -> str:
         return await asyncio.to_thread(translate_free_text_sync, text, target_lang)
+
     return _call
 
 
