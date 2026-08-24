@@ -7,29 +7,34 @@
 [![Reviewed by CodeRabbit](https://img.shields.io/badge/Reviewed_by-CodeRabbit-ff5c5c.svg)](https://coderabbit.ai)
 [![Reviewed by Qodo](https://img.shields.io/badge/Reviewed_by-Qodo%20(PR--Agent)-4b8bbe.svg)](https://qodo.ai)
 
-Un sistema integral e inteligente para la **localización, traducción contextual y síntesis de voz (TTS)** de mods para **The Elder Scrolls V: Skyrim (Special Edition / Anniversary Edition)**.
+Un sistema integral para la **localización, traducción contextual y síntesis de voz (TTS)** de mods para **The Elder Scrolls V: Skyrim (Special Edition / Anniversary Edition)**.
 
-Permite procesar archivos `.strings`, `.dlstrings`, `.ilstrings`, y plugins `.esp` directamente, generar traducciones contextuales respetando el *lore* y glosario oficial, sintetizar diálogos en audio neural de alta calidad con **Edge-TTS**, exportar a **Dynamic String Distributor (DSD)** e inyectar directamente en **Mod Organizer 2 (MO2)**.
+El proyecto permite extraer y procesar cadenas y diálogos desde volcados JSON y plugins binarios `.esp`/`.esm`, generar traducciones contextuales respetando el *lore* y glosario oficial, sintetizar diálogos en audio neural con **Edge-TTS**, exportar a **Dynamic String Distributor (DSD)** de SKSE e inyectar directamente en **Mod Organizer 2 (MO2)**.
 
 ---
 
-## 🌟 Características Principales
+## 🌟 Estado y Capacidades Implementadas
 
-- 📜 **Parser Universal de Skyrim**: Lee y procesa formatos de localización nativos (`.strings`, `.dlstrings`, `.ilstrings`) y parseo binario de registros `INFO`/`QUST` en `.esp`.
+- 📜 **Extracción y Parseo de Skyrim**:
+  - **Plugins Binarios (`.esp` / `.esm`)**: Extracción directa de registros translatables implementados (`INFO` para diálogos con resolución de actores/temas y `QUST` para nombres/objetivos de misiones, así como `DIAL`, `BOOK`, `MESG`, `NPC_`, `WEAP`, `ARMO`, `SPEL`, `ACTI`, `ALCH`, `PERK`, `MGEF`, `FACT`, `RACE`, `MISC`, `FLOR`, `LCTN`) con resolución jerárquica de maestros (`MasterResolver`).
+  - **Esquemas JSON (`parser.py`)**: Ingesta y validación de volcados de cadenas estructuradas (`StringEntry`).
+  - ⚠️ *Limitaciones Actuales*: El parseo directo de archivos binarios localizados nativos (`.strings`, `.dlstrings`, `.ilstrings`) no está soportado aún (los plugins con flag `FLAG_LOCALIZED` se omiten para evitar ingerir StringIDs binarios como texto). Soporte parcial de `.esl`: las referencias a FormIDs con prefijo de plugin ligero `0xFE` no están soportadas todavía.
 - 🧠 **Traducción Contextual con Lore**:
-  - Motor de traducción con compatibilidad OpenAI / DeepSeek / Ollama / OpenRouter.
-  - Traductor gratuito de alta velocidad con reintentos y control de concurrencia.
-  - Glosario oficial de Skyrim integrado (ej. *Dragonborn* ➔ *Sangre de Dragón*, *Whiterun* ➔ *Carrera Blanca*).
-- 🎙️ **Generación de Voz Neural (Edge-TTS)**:
-  - Generación asíncrona de audios `.mp3` para cada línea de diálogo.
-  - Mapeo automático de actores y tipos de voz (`MaleNord`, `FemaleNord`, etc.) a carpetas estructuradas de Skyrim (`sound/voice/...`).
-- ⚡ **Exportador a Dynamic String Distributor (DSD)**: Genera archivos JSON compatibles con el plugin de SKSE *Dynamic String Distributor*.
-- 📂 **Integración Nativa con Mod Organizer 2 (MO2)**:
-  - Detección automática del directorio de MO2.
-  - Escaneo de mods instalados y procesamiento directo.
-  - Inyección automática de traducciones y audios generados en la carpeta del mod.
-- 🎨 **Interfaz Nórdica Premium (React + Vite)**:
-  - UI interactiva inspirada en Skyrim con runas, efectos metálicos, arrastrar y soltar JSON/mods, y logs en tiempo real vía **WebSockets**.
+  - **Modo LLM**: Compatible con OpenAI, DeepSeek, Ollama, Groq y proveedores compatibles, con inyección dinámica del glosario oficial canónico en el *system prompt*.
+  - **Modo Gratuito**: Traducción neuronal de alta velocidad con reintentos, control de concurrencia y protección estricta de placeholders contra el glosario.
+  - **Glosario Canónico**: `SKYRIM_GLOSSARY` integrado como fuente única de verdad para términos de lore (ej. *Dragonborn* ➔ *Sangre de Dragón*, *Whiterun* ➔ *Carrera Blanca*).
+- 🎙️ **Pipeline de Voz y Audio**:
+  - **Staging de Voz Neural (Edge-TTS)**: Generación asíncrona de archivos de audio `.mp3` para líneas de diálogo (`is_dialog=True`), con mapeo automático de `VoiceType` de Skyrim (`MaleNord`, `FemaleCommander`, etc.) a voces neuronales organizadas en `Sound/Voice/[plugin]/[voice_type]/`.
+  - **Integración Experimental Skyrim Voice / FUZ (`src/voice_assets.py`)**: Prueba de concepto estructural validada (*structural proof*): cálculo determinista de nombres base según Creation Kit (`<Quest>_<Topic>_<fid8>_<response>`), rutas relativas seguras contra *path traversal* en Windows y empaquetado/desempaquetado del contenedor binario `.fuz` (`FUZE` v1 con LIP y audio payload). *Nota: No constituye un pipeline automático in-game completo (la transcodificación a LIP/XWM requiere herramientas externas propietarias como Creation Kit/LipGenerator/xWMAEncode no integradas en runtime).*
+- ⚡ **Exportación a Dynamic String Distributor (DSD)**:
+  - Generación de diccionarios JSON compatibles con la especificación oficial de **Dynamic String Distributor 1.4.3** (`0x<LOCAL_ID>|<DefiningPlugin>`, pares de registro/subregistro soportados e índice requerido para `INFO NAM1` y `QUST NNAM`).
+  - Validación *fail-fast* previa antes de traducción para no consumir cuotas en entradas no exportables; no se fabrica metadata para fuentes JSON legadas sin origen de plugin.
+- 📂 **Integración con Mod Organizer 2 (MO2)**:
+  - Detección automática de rutas estándar de MO2 en unidades del sistema.
+  - Exploración de carpetas de mods instalados (detección de plugins y esquemas JSON).
+  - Inyección directa de archivos de traducción y audios en la carpeta del mod bajo bloqueo concurrente seguro (`asyncio.Lock`).
+- 🎨 **Interfaz de Usuario (React 19 + Vite)**:
+  - SPA con estética inspirada en Skyrim, monitoreo de progreso, soporte drag-and-drop y logs en tiempo real vía **WebSockets**.
 
 ---
 
@@ -40,15 +45,17 @@ graph TD
     UI[🖥️ Frontend React / Vite] <-->|HTTP / WebSocket| API[⚡ FastAPI Backend]
     
     subgraph Core Engine
-        API --> Parser[📜 Skyrim String & ESP Parser]
+        API --> ESPParser[📜 Binary ESP/ESM Parser + MasterResolver]
+        API --> JSONParser[📖 JSON String Parser]
         API --> Translator[🧠 Contextual Translator + Lore Glossary]
-        API --> TTS[🎙️ Edge-TTS Voice Generator]
-        API --> DSD[📦 DSD Exporter]
+        API --> TTS[🎙️ Edge-TTS Neural Voice Staging]
+        API --> VoiceAssets[🔊 Creation Kit Voice & FUZ Container Builder]
+        API --> DSD[📦 DSD 1.4.3 Exporter]
     end
 
     subgraph Modding Ecosystem
         DSD --> SKSE[⚙️ SKSE / Dynamic String Distributor]
-        TTS --> VoiceDir[🔊 sound/voice/plugin_name/]
+        TTS --> VoiceDir[🔊 Sound/Voice/plugin_name/VoiceType/]
         API --> MO2[📂 Mod Organizer 2 Direct Injection]
     end
 ```
@@ -75,8 +82,8 @@ source venv/bin/activate
 # Instalar dependencias
 pip install -r requirements.txt
 
-# Iniciar servidor API (puerto 8000)
-python api.py
+# Iniciar servidor API con Uvicorn (puerto 8000)
+uvicorn api:app --port 8000
 ```
 
 ### 3. Frontend (React + Vite)
@@ -87,17 +94,23 @@ npm run dev
 ```
 Abre tu navegador en `http://localhost:5173`.
 
-### 4. Modo Línea de Comandos (CLI)
-También puedes ejecutar el flujo por lotes mediante el CLI:
+---
+
+## 🛠️ Arnés de Demostración Interno (`main.py`)
+
+El archivo `main.py` funciona como un arnés de desarrollo y demostración asíncrona interna para verificar los pasos clave del pipeline (parseo de JSON de prueba, traducción mock/real, síntesis simulada de voz y validación de exportación DSD):
+
 ```bash
-python main.py --input test_input.json --lang Spanish --voice es-ES-AlvaroNeural --plugin MiMod.esp
+python main.py
 ```
+
+*(Nota: `main.py` es un script de prueba de flujo interno para desarrolladores, no una interfaz CLI con argumentos de línea de comandos).*
 
 ---
 
 ## 🧪 Pruebas Automatizadas
 
-El proyecto cuenta con una suite completa de pruebas unitarias e integración:
+El proyecto cuenta con una suite completa de pruebas unitarias y de integración herméticas:
 
 ```bash
 pytest --verbose
@@ -111,6 +124,15 @@ Para optimizar el uso de tokens y evitar gastos innecesarios de cuotas de API:
 
 - 🚫 **GitHub Copilot PR Reviewer / OpenAI Codex Bots**: Desactivados / Omitidos para escaneos automáticos de Pull Requests en este repositorio.
 - ✅ **CodeRabbit & Qodo (PR-Agent)**: Configurados como los únicos revisores oficiales de código y PRs (`.coderabbit.yaml` y `.pr_agent.toml`).
+
+---
+
+## ⚖️ Descargo de Responsabilidad y Marcas Registradas
+
+> [!IMPORTANT]
+> - **Este proyecto no está afiliado ni respaldado por Bethesda Softworks ni ZeniMax Media.**
+> - *The Elder Scrolls*, *Skyrim*, *Bethesda* y *Creation Kit* son marcas comerciales o marcas registradas de Bethesda Softworks LLC y/o ZeniMax Media Inc.
+> - **Los usuarios son responsables de respetar los permisos y licencias de los mods que traduzcan o redistribuyan.**
 
 ---
 
