@@ -19,7 +19,7 @@ from src.parser import parse_strings_file
 from src.esp_parser import parse_esp_file
 from src.voice_mapper import resolve_voice_for_entry
 from src.free_translator import free_translator_callable
-from src.translator import translate_entries, create_openai_compatible_translator
+from src.translator import translate_entries, create_openai_compatible_translator, TranslationProvider
 from src.tts_generator import generate_voice_file
 from src.dsd_exporter import export_to_dsd, validate_dsd_entries, DSDExportError
 

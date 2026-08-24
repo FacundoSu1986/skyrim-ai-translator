@@ -1,4 +1,5 @@
 import asyncio
+from enum import Enum
 import json
 import logging
 from dataclasses import replace
@@ -8,6 +9,25 @@ import urllib.error
 from src.models import StringEntry
 
 logger = logging.getLogger(__name__)
+
+
+class TranslationProvider(str, Enum):
+    """
+    Identificadores de proveedores de traducción soportados.
+
+    Proveedores recomendados:
+    - OPENAI_COMPATIBLE: Recomendado para traducciones productivas y alta calidad vía
+      APIs remotas compatibles con OpenAI (OpenAI, DeepSeek, Groq, OpenRouter).
+    - OLLAMA: Recomendado para traducción local, privada y offline ejecutada en el
+      mismo host mediante modelos LLM locales (Llama 3, Mistral, Qwen).
+
+    Proveedor deprecado / fallback:
+    - UNOFFICIAL_GTX: Endpoint no autenticado de Google Translate. Deprecado, sin SLA,
+      sin garantía de estabilidad y sujeto a límites no documentados de términos de servicio.
+    """
+    OPENAI_COMPATIBLE = "openai_compatible"
+    OLLAMA = "ollama"
+    UNOFFICIAL_GTX = "unofficial_gtx"
 
 # Official Skyrim Spanish localization glossary
 SKYRIM_GLOSSARY = {
