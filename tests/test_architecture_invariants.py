@@ -198,7 +198,9 @@ def _time_sleep_en_async() -> dict[str, list[int]]:
 
 def _translate_entries_ast() -> ast.AsyncFunctionDef:
     arbol = _leer_ast(SRC / "translator.py")
-    funciones = [nodo for nodo in arbol.body if isinstance(nodo, ast.AsyncFunctionDef) and nodo.name == "translate_entries"]
+    funciones = [
+        nodo for nodo in arbol.body if isinstance(nodo, ast.AsyncFunctionDef) and nodo.name == "translate_entries"
+    ]
     assert len(funciones) == 1, "translate_entries debe tener una única definición canónica"
     return funciones[0]
 
@@ -241,7 +243,9 @@ def test_detector_urlopen_reconoce_aliases_comunes() -> None:
     assert _contar_urlopen("import urllib.request as http\nhttp.urlopen('https://example.test')\n") == 1
     assert _contar_urlopen("from urllib import request as req\nreq.urlopen('https://example.test')\n") == 1
     assert _contar_urlopen("from urllib.request import urlopen as abrir\nabrir('https://example.test')\n") == 1
-    assert _contar_urlopen("import urllib.request\nabrir = urllib.request.urlopen\nabrir('https://example.test')\n") == 1
+    assert (
+        _contar_urlopen("import urllib.request\nabrir = urllib.request.urlopen\nabrir('https://example.test')\n") == 1
+    )
     assert _contar_urlopen("import otra\notra.urlopen('x')\n") == 0
 
 

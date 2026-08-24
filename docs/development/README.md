@@ -85,8 +85,7 @@ integración externa debe:
 
 ```python
 @pytest.mark.network
-def test_integracion_real():
-    ...
+def test_integracion_real(): ...
 ```
 
 y solo se ejecuta cuando `RUN_NETWORK_TESTS=1`.

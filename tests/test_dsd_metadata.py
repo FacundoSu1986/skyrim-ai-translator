@@ -48,10 +48,7 @@ def test_string_entry_metadata_fields_are_backwards_compatible():
 
 def test_parser_preserves_local_record_metadata(tmp_path):
     esp_path = tmp_path / "TargetMod.esp"
-    book_body = (
-        make_subrecord(b"EDID", b"MyAncientBook\x00")
-        + make_subrecord(b"FULL", b"Ancient Book\x00")
-    )
+    book_body = make_subrecord(b"EDID", b"MyAncientBook\x00") + make_subrecord(b"FULL", b"Ancient Book\x00")
     book = make_record(b"BOOK", 0x00000123, book_body)
     esp_path.write_bytes(make_tes4_header() + make_grup(b"BOOK", book))
 
@@ -69,16 +66,11 @@ def test_parser_preserves_local_record_metadata(tmp_path):
 
 def test_parser_preserves_master_origin_for_target_override(tmp_path):
     esp_path = tmp_path / "TargetMod.esp"
-    book_body = (
-        make_subrecord(b"EDID", b"OverriddenBook\x00")
-        + make_subrecord(b"FULL", b"Overridden Skyrim Book\x00")
-    )
+    book_body = make_subrecord(b"EDID", b"OverriddenBook\x00") + make_subrecord(b"FULL", b"Overridden Skyrim Book\x00")
     # Master index 0 -> Skyrim.esm. Physically present in TargetMod.esp,
     # canonically defined by Skyrim.esm.
     book = make_record(b"BOOK", 0x0001A697, book_body)
-    esp_path.write_bytes(
-        make_tes4_header(["Skyrim.esm"]) + make_grup(b"BOOK", book)
-    )
+    esp_path.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"BOOK", book))
 
     entries = parse_esp_file(esp_path)
     entry = next(e for e in entries if e.text == "Overridden Skyrim Book")
@@ -94,8 +86,7 @@ def test_parser_preserves_multiple_strings_from_same_record(tmp_path):
     book = make_record(
         b"BOOK",
         0x00000111,
-        make_subrecord(b"FULL", b"Title\x00")
-        + make_subrecord(b"DESC", b"Body text\x00"),
+        make_subrecord(b"FULL", b"Title\x00") + make_subrecord(b"DESC", b"Body text\x00"),
     )
     esp_path.write_bytes(make_tes4_header() + make_grup(b"BOOK", book))
 
@@ -113,8 +104,7 @@ def test_parser_info_nam1_uses_real_trdt_response_number(tmp_path):
     info = make_record(
         b"INFO",
         0x00000333,
-        make_subrecord(b"TRDT", make_trdt(0))
-        + make_subrecord(b"NAM1", b"First response\x00"),
+        make_subrecord(b"TRDT", make_trdt(0)) + make_subrecord(b"NAM1", b"First response\x00"),
     )
     esp_path.write_bytes(make_tes4_header() + make_grup(b"INFO", info))
 
@@ -205,10 +195,7 @@ def test_parser_quest_nnam_uses_qobj_objective_index(tmp_path):
     )
     esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", quest))
 
-    objectives = [
-        e for e in parse_esp_file(esp_path)
-        if e.record_type == "QUST" and e.subrecord_type == "NNAM"
-    ]
+    objectives = [e for e in parse_esp_file(esp_path) if e.record_type == "QUST" and e.subrecord_type == "NNAM"]
 
     # Indexed 1->N: both objectives are emitted with their QOBJ indices.
     assert [(e.text, e.string_index) for e in objectives] == [
@@ -254,9 +241,7 @@ async def test_translation_preserves_dsd_metadata():
     async def translate(_text: str, _context: str) -> str:
         return "Hola"
 
-    translated = (
-        await translate_entries([entry], target_lang="Spanish", api_callable=translate)
-    )[0]
+    translated = (await translate_entries([entry], target_lang="Spanish", api_callable=translate))[0]
 
     assert translated.translated_text == "Hola"
     assert translated.form_id == entry.form_id
@@ -298,8 +283,7 @@ def test_parser_info_nam1_without_trdt_dedupes_warnings(tmp_path, caplog):
     info = make_record(
         b"INFO",
         0x00000666,
-        make_subrecord(b"NAM1", b"Loose response\x00")
-        + make_subrecord(b"NAM1", b"Loose repeat\x00"),
+        make_subrecord(b"NAM1", b"Loose response\x00") + make_subrecord(b"NAM1", b"Loose repeat\x00"),
     )
     esp_path.write_bytes(make_tes4_header() + make_grup(b"INFO", info))
 
@@ -326,10 +310,7 @@ def test_parser_qobj_too_short_does_not_crash_and_dedupes_warnings(tmp_path, cap
     esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", quest))
 
     with caplog.at_level(logging.WARNING):
-        objectives = [
-            e for e in parse_esp_file(esp_path)
-            if e.record_type == "QUST" and e.subrecord_type == "NNAM"
-        ]
+        objectives = [e for e in parse_esp_file(esp_path) if e.record_type == "QUST" and e.subrecord_type == "NNAM"]
 
     assert len(objectives) == 1
     assert objectives[0].string_index is None
@@ -346,16 +327,12 @@ def test_parser_quest_nnam_without_qobj_dedupes_warnings(tmp_path, caplog):
     quest = make_record(
         b"QUST",
         0x00000777,
-        make_subrecord(b"NNAM", b"Objective without QOBJ\x00")
-        + make_subrecord(b"NNAM", b"Repeat without QOBJ\x00"),
+        make_subrecord(b"NNAM", b"Objective without QOBJ\x00") + make_subrecord(b"NNAM", b"Repeat without QOBJ\x00"),
     )
     esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", quest))
 
     with caplog.at_level(logging.WARNING):
-        objectives = [
-            e for e in parse_esp_file(esp_path)
-            if e.record_type == "QUST" and e.subrecord_type == "NNAM"
-        ]
+        objectives = [e for e in parse_esp_file(esp_path) if e.record_type == "QUST" and e.subrecord_type == "NNAM"]
 
     assert len(objectives) == 1
     assert objectives[0].string_index is None
@@ -398,10 +375,7 @@ def test_parser_whitespace_nnam_does_not_leak_qobj_index_to_next_nnam(tmp_path, 
     esp_path.write_bytes(make_tes4_header() + make_grup(b"QUST", quest))
 
     with caplog.at_level(logging.WARNING):
-        objectives = [
-            e for e in parse_esp_file(esp_path)
-            if e.record_type == "QUST" and e.subrecord_type == "NNAM"
-        ]
+        objectives = [e for e in parse_esp_file(esp_path) if e.record_type == "QUST" and e.subrecord_type == "NNAM"]
 
     assert len(objectives) == 1
     assert objectives[0].text == "Real objective"
@@ -416,8 +390,7 @@ def test_parser_dedupes_accidentally_repeated_same_identity_subrecords(tmp_path)
     book = make_record(
         b"BOOK",
         0x00000888,
-        make_subrecord(b"FULL", b"Duplicate Title\x00")
-        + make_subrecord(b"FULL", b"Duplicate Title\x00"),
+        make_subrecord(b"FULL", b"Duplicate Title\x00") + make_subrecord(b"FULL", b"Duplicate Title\x00"),
     )
     esp_path.write_bytes(make_tes4_header() + make_grup(b"BOOK", book))
 

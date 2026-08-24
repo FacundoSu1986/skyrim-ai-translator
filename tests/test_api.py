@@ -2,15 +2,17 @@ import json
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
-from fastapi.testclient import TestClient
-from api import app, jobs
 
+from fastapi.testclient import TestClient
+
+from api import app, jobs
 
 client = TestClient(app)
 
 
 async def _mock_free_translate(text: str, context: str = "") -> str:
     return f"Traducido: {text}"
+
 
 def test_health_check():
     response = client.get("/api/health")
@@ -51,32 +53,35 @@ def test_get_voices():
     assert "voices" in response.json()
     assert len(response.json()["voices"]) > 0
 
+
 def test_get_mo2_mods(tmp_path):
     mod_dir = tmp_path / "mods"
     mod_dir.mkdir()
     (mod_dir / "SkyUI").mkdir()
     (mod_dir / "Unofficial Patch").mkdir()
-    
+
     response = client.get(f"/api/mo2/mods?path={mod_dir}")
     assert response.status_code == 200
     assert response.json() == {"mods": ["SkyUI", "Unofficial Patch"]}
+
 
 def test_get_mo2_mods_invalid_path():
     response = client.get("/api/mo2/mods?path=non_existent_folder_xyz")
     assert response.status_code == 200
     assert response.json() == {"mods": []}
 
+
 def test_upload_json(tmp_path):
     test_json = tmp_path / "TestMod.json"
     test_json.write_text('[{"FormID": "0001", "Text": "Hi"}]', encoding="utf-8")
-    
+
     with open(test_json, "rb") as f:
         response = client.post(
             "/api/upload",
             files={"file": ("TestMod.json", f, "application/json")},
-            data={"config": '{"api_key": "sk-secret-key", "target_lang": "French"}'}
+            data={"config": '{"api_key": "sk-secret-key", "target_lang": "French"}'},
         )
-        
+
     assert response.status_code == 200
     job_id = response.json()["job_id"]
     assert response.json()["plugin_name"] == "TestMod"
@@ -84,41 +89,35 @@ def test_upload_json(tmp_path):
     assert "api_key" not in jobs[job_id]["config"]
     assert jobs[job_id]["api_key"] == "sk-secret-key"
 
+
 def test_mo2_start_invalid_mo2_path():
-    res = client.post("/api/mo2/start", json={
-        "mo2_path": "Z:\\non_existent_drive_folder_123",
-        "mod_name": "AnyMod"
-    })
+    res = client.post("/api/mo2/start", json={"mo2_path": "Z:\\non_existent_drive_folder_123", "mod_name": "AnyMod"})
     assert res.status_code == 400
     assert "MO2" in res.json()["detail"]
+
 
 def test_mo2_start_and_inject(tmp_path):
     mo2_dir = tmp_path / "mods"
     mod_folder = mo2_dir / "CoolCompanion"
     mod_folder.mkdir(parents=True)
-    
+
     # 1. Start MO2 job
-    res = client.post("/api/mo2/start", json={
-        "mo2_path": str(mo2_dir),
-        "mod_name": "CoolCompanion",
-        "target_lang": "Spanish",
-        "generate_voice": False
-    })
+    res = client.post(
+        "/api/mo2/start",
+        json={"mo2_path": str(mo2_dir), "mod_name": "CoolCompanion", "target_lang": "Spanish", "generate_voice": False},
+    )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
-    
+
     # Simulate job build output
     job = jobs[job_id]
     job["status"] = "completed"
     build_dir = Path(job["output_dir"])
     build_dir.mkdir(parents=True, exist_ok=True)
     (build_dir / "test_file.txt").write_text("Hello Skyrim")
-    
+
     # 2. Test Inject endpoint
-    res_inject = client.post(f"/api/mo2/inject/{job_id}", json={
-        "mo2_path": str(mo2_dir),
-        "mod_name": "CoolCompanion"
-    })
+    res_inject = client.post(f"/api/mo2/inject/{job_id}", json={"mo2_path": str(mo2_dir), "mod_name": "CoolCompanion"})
     assert res_inject.status_code == 200
     assert res_inject.json()["success"] is True
     assert (mod_folder / "test_file.txt").exists()
@@ -142,10 +141,7 @@ def test_auto_detect_mo2_fallback(monkeypatch):
 
 
 def test_inject_invalid_job():
-    res = client.post("/api/mo2/inject/non_existent_id", json={
-        "mo2_path": "C:\\mods",
-        "mod_name": "AnyMod"
-    })
+    res = client.post("/api/mo2/inject/non_existent_id", json={"mo2_path": "C:\\mods", "mod_name": "AnyMod"})
     assert res.status_code == 404
 
 
@@ -157,35 +153,44 @@ def test_mo2_start_with_skyrim_data_path(tmp_path):
     skyrim_data.mkdir()
 
     # 1. Valid skyrim_data_path -> accepted
-    res_valid = client.post("/api/mo2/start", json={
-        "mo2_path": str(mo2_dir),
-        "mod_name": "SkyrimQuest",
-        "skyrim_data_path": str(skyrim_data),
-        "target_lang": "Spanish",
-        "generate_voice": False
-    })
+    res_valid = client.post(
+        "/api/mo2/start",
+        json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "SkyrimQuest",
+            "skyrim_data_path": str(skyrim_data),
+            "target_lang": "Spanish",
+            "generate_voice": False,
+        },
+    )
     assert res_valid.status_code == 200
     job_id = res_valid.json()["job_id"]
     assert jobs[job_id]["config"]["skyrim_data_path"] == str(skyrim_data)
 
     # 2. Missing / None skyrim_data_path -> allowed
-    res_none = client.post("/api/mo2/start", json={
-        "mo2_path": str(mo2_dir),
-        "mod_name": "SkyrimQuest",
-        "skyrim_data_path": None,
-        "target_lang": "Spanish",
-        "generate_voice": False
-    })
+    res_none = client.post(
+        "/api/mo2/start",
+        json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "SkyrimQuest",
+            "skyrim_data_path": None,
+            "target_lang": "Spanish",
+            "generate_voice": False,
+        },
+    )
     assert res_none.status_code == 200
 
     # 3. Invalid / non-existent skyrim_data_path -> rejected HTTP 400
-    res_invalid = client.post("/api/mo2/start", json={
-        "mo2_path": str(mo2_dir),
-        "mod_name": "SkyrimQuest",
-        "skyrim_data_path": "Z:\\non_existent_skyrim_data_999",
-        "target_lang": "Spanish",
-        "generate_voice": False
-    })
+    res_invalid = client.post(
+        "/api/mo2/start",
+        json={
+            "mo2_path": str(mo2_dir),
+            "mod_name": "SkyrimQuest",
+            "skyrim_data_path": "Z:\\non_existent_skyrim_data_999",
+            "target_lang": "Spanish",
+            "generate_voice": False,
+        },
+    )
     assert res_invalid.status_code == 400
     assert "Skyrim Data" in res_invalid.json()["detail"]
 
@@ -201,7 +206,7 @@ def test_upload_skyrim_data_path_validation(tmp_path):
         res_valid = client.post(
             "/api/upload",
             files={"file": ("ModA.json", f, "application/json")},
-            data={"config": json.dumps({"skyrim_data_path": str(skyrim_data)})}
+            data={"config": json.dumps({"skyrim_data_path": str(skyrim_data)})},
         )
     assert res_valid.status_code == 200
 
@@ -210,7 +215,7 @@ def test_upload_skyrim_data_path_validation(tmp_path):
         res_none = client.post(
             "/api/upload",
             files={"file": ("ModA.json", f, "application/json")},
-            data={"config": json.dumps({"target_lang": "Spanish"})}
+            data={"config": json.dumps({"target_lang": "Spanish"})},
         )
     assert res_none.status_code == 200
 
@@ -219,7 +224,7 @@ def test_upload_skyrim_data_path_validation(tmp_path):
         res_invalid = client.post(
             "/api/upload",
             files={"file": ("ModA.json", f, "application/json")},
-            data={"config": json.dumps({"skyrim_data_path": "Z:\\invalid_skyrim_data_path_123"})}
+            data={"config": json.dumps({"skyrim_data_path": "Z:\\invalid_skyrim_data_path_123"})},
         )
     assert res_invalid.status_code == 400
     assert "Skyrim Data" in res_invalid.json()["detail"]
@@ -234,7 +239,7 @@ def test_websocket_empty_plugin_no_mock_fallback(tmp_path):
         res = client.post(
             "/api/upload",
             files={"file": ("EmptyMod.json", f, "application/json")},
-            data={"config": json.dumps({"generate_voice": True})}
+            data={"config": json.dumps({"generate_voice": True})},
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
@@ -271,16 +276,14 @@ def test_websocket_empty_plugin_no_mock_fallback(tmp_path):
 def test_websocket_unresolved_voice_fail_fast(tmp_path):
     """Verify that dialogue with voice_type=None and generate_voice=True fails fast with 0 audio files and no auto-inject."""
     test_json = tmp_path / "NoVoiceMod.json"
-    dialogue_data = [
-        {"FormID": "0005555A", "Text": "Who goes there?", "is_dialog": True, "voice_type": None}
-    ]
+    dialogue_data = [{"FormID": "0005555A", "Text": "Who goes there?", "is_dialog": True, "voice_type": None}]
     test_json.write_text(json.dumps(dialogue_data), encoding="utf-8")
 
     with open(test_json, "rb") as f:
         res = client.post(
             "/api/upload",
             files={"file": ("NoVoiceMod.json", f, "application/json")},
-            data={"config": json.dumps({"generate_voice": True, "auto_inject": True})}
+            data={"config": json.dumps({"generate_voice": True, "auto_inject": True})},
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
@@ -315,16 +318,14 @@ def test_websocket_unresolved_voice_fail_fast(tmp_path):
 def test_websocket_unresolved_voice_allowed_when_voice_disabled(tmp_path):
     """Verify that dialogue with voice_type=None completes translation normally when generate_voice=False."""
     test_json = tmp_path / "TextOnlyMod.json"
-    dialogue_data = [
-        {"FormID": "0007777A", "Text": "A letter from the Jarl.", "is_dialog": True, "voice_type": None}
-    ]
+    dialogue_data = [{"FormID": "0007777A", "Text": "A letter from the Jarl.", "is_dialog": True, "voice_type": None}]
     test_json.write_text(json.dumps(dialogue_data), encoding="utf-8")
 
     with open(test_json, "rb") as f:
         res = client.post(
             "/api/upload",
             files={"file": ("TextOnlyMod.json", f, "application/json")},
-            data={"config": json.dumps({"generate_voice": False})}
+            data={"config": json.dumps({"generate_voice": False})},
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
@@ -353,8 +354,9 @@ def test_websocket_unresolved_voice_allowed_when_voice_disabled(tmp_path):
 def test_upload_esp_skyrim_data_path_flow(tmp_path):
     """Verify that skyrim_data_path flows from /api/upload config to parse_esp_file master_search_paths."""
     import struct
-    from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
+
     from tests.test_dsd_metadata import make_trdt
+    from tests.test_esp_and_voice import make_grup, make_record, make_subrecord, make_tes4_header
 
     # 1. Master in Skyrim Data path
     skyrim_data = tmp_path / "SkyrimData"
@@ -364,8 +366,7 @@ def test_upload_esp_skyrim_data_path_flow(tmp_path):
     npc_rec = make_record(
         b"NPC_",
         0x0001A697,
-        make_subrecord(b"FULL", b"Balgruuf\x00") +
-        make_subrecord(b"VTCK", struct.pack("<I", 0x00010001))
+        make_subrecord(b"FULL", b"Balgruuf\x00") + make_subrecord(b"VTCK", struct.pack("<I", 0x00010001)),
     )
     master_path.write_bytes(make_tes4_header([]) + make_grup(b"NPC_", vtyp_rec + npc_rec))
 
@@ -374,9 +375,9 @@ def test_upload_esp_skyrim_data_path_flow(tmp_path):
     info_rec = make_record(
         b"INFO",
         0x01000001,
-        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697)) +
-        make_subrecord(b"TRDT", make_trdt(0)) +
-        make_subrecord(b"NAM1", b"Greetings dragonborn.\x00")
+        make_subrecord(b"ANAM", struct.pack("<I", 0x0001A697))
+        + make_subrecord(b"TRDT", make_trdt(0))
+        + make_subrecord(b"NAM1", b"Greetings dragonborn.\x00"),
     )
     mod_esp.write_bytes(make_tes4_header(["Skyrim.esm"]) + make_grup(b"INFO", info_rec))
 
@@ -385,10 +386,7 @@ def test_upload_esp_skyrim_data_path_flow(tmp_path):
         res = client.post(
             "/api/upload",
             files={"file": ("QuestMod.esp", f, "application/octet-stream")},
-            data={"config": json.dumps({
-                "skyrim_data_path": str(skyrim_data),
-                "generate_voice": False
-            })}
+            data={"config": json.dumps({"skyrim_data_path": str(skyrim_data), "generate_voice": False})},
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
@@ -424,50 +422,45 @@ def _run_websocket_job(job_id: str) -> list[dict]:
 
 def test_websocket_esp_dsd_official_output_path_and_content(tmp_path):
     """Golden path L: ESP jobs write the official DSD layout with 1->N content."""
-    import struct
-    from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
     from tests.test_dsd_metadata import make_trdt
+    from tests.test_esp_and_voice import make_grup, make_record, make_subrecord, make_tes4_header
 
     # TargetMod.esp: target-new BOOK, Skyrim.esm override BOOK, and one INFO
     # carrying two indexed responses (NAM1 index 0 and 4).
     mod_esp = tmp_path / "TargetMod.esp"
     new_book = make_record(
-        b"BOOK", 0x01000123,
-        make_subrecord(b"EDID", b"MyBook\x00") + make_subrecord(b"FULL", b"Ancient Book\x00")
+        b"BOOK", 0x01000123, make_subrecord(b"EDID", b"MyBook\x00") + make_subrecord(b"FULL", b"Ancient Book\x00")
     )
     override_book = make_record(
-        b"BOOK", 0x0001A697,
-        make_subrecord(b"EDID", b"OvrBook\x00") + make_subrecord(b"FULL", b"Overridden Book\x00")
+        b"BOOK", 0x0001A697, make_subrecord(b"EDID", b"OvrBook\x00") + make_subrecord(b"FULL", b"Overridden Book\x00")
     )
     multi_info = make_record(
-        b"INFO", 0x01000333,
-        make_subrecord(b"TRDT", make_trdt(0)) + make_subrecord(b"NAM1", b"First response\x00") +
-        make_subrecord(b"TRDT", make_trdt(4)) + make_subrecord(b"NAM1", b"Second response\x00")
+        b"INFO",
+        0x01000333,
+        make_subrecord(b"TRDT", make_trdt(0))
+        + make_subrecord(b"NAM1", b"First response\x00")
+        + make_subrecord(b"TRDT", make_trdt(4))
+        + make_subrecord(b"NAM1", b"Second response\x00"),
     )
     mod_esp.write_bytes(
-        make_tes4_header(["Skyrim.esm"])
-        + make_grup(b"BOOK", new_book + override_book)
-        + make_grup(b"INFO", multi_info)
+        make_tes4_header(["Skyrim.esm"]) + make_grup(b"BOOK", new_book + override_book) + make_grup(b"INFO", multi_info)
     )
 
     with open(mod_esp, "rb") as f:
         res = client.post(
             "/api/upload",
             files={"file": ("TargetMod.esp", f, "application/octet-stream")},
-            data={"config": json.dumps({"generate_voice": False})}
+            data={"config": json.dumps({"generate_voice": False})},
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
 
     with patch("api.free_translator_callable", new=_mock_free_translate):
-        messages = _run_websocket_job(job_id)
+        _ = _run_websocket_job(job_id)
     assert jobs[job_id]["status"] == "completed", jobs[job_id].get("error")
 
     build_dir = Path(jobs[job_id]["output_dir"])
-    dsd_file = (
-        build_dir / "SKSE" / "Plugins" / "DynamicStringDistributor"
-        / "TargetMod.esp" / "SkyrimAITranslator.json"
-    )
+    dsd_file = build_dir / "SKSE" / "Plugins" / "DynamicStringDistributor" / "TargetMod.esp" / "SkyrimAITranslator.json"
     assert dsd_file.exists(), f"Expected official DSD path {dsd_file}"
     assert not (build_dir / "SKSE" / "Plugins" / "DSD").exists()
 
@@ -479,8 +472,7 @@ def test_websocket_esp_dsd_official_output_path_and_content(tmp_path):
     assert by_form_type[("0x01A697|Skyrim.esm", "BOOK FULL")]["string"]
 
     info_items = [
-        item for item in content
-        if item["form_id"] == "0x000333|TargetMod.esp" and item["type"] == "INFO NAM1"
+        item for item in content if item["form_id"] == "0x000333|TargetMod.esp" and item["type"] == "INFO NAM1"
     ]
     # Indexed 1->N: both responses of the same INFO survive the whole
     # pipeline with their own index.
@@ -491,16 +483,16 @@ def test_websocket_esp_dsd_official_output_path_and_content(tmp_path):
 def test_websocket_preflight_unsupported_type_fails_before_translation(tmp_path):
     """FACT FULL cannot be represented by DSD 1.4.3: the job must fail fast
     with DSD_UNSUPPORTED_TYPE before translation and voice generation."""
-    from unittest.mock import patch, MagicMock
-    from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
+    from unittest.mock import MagicMock, patch
+
+    from tests.test_esp_and_voice import make_grup, make_record, make_subrecord, make_tes4_header
 
     mock_translate = MagicMock()
     mock_generate_voice = MagicMock()
 
     mod_esp = tmp_path / "FactionMod.esp"
     fact_rec = make_record(
-        b"FACT", 0x00000123,
-        make_subrecord(b"EDID", b"MyFaction\x00") + make_subrecord(b"FULL", b"Thieves Guild\x00")
+        b"FACT", 0x00000123, make_subrecord(b"EDID", b"MyFaction\x00") + make_subrecord(b"FULL", b"Thieves Guild\x00")
     )
     mod_esp.write_bytes(make_tes4_header([]) + make_grup(b"FACT", fact_rec))
 
@@ -508,13 +500,12 @@ def test_websocket_preflight_unsupported_type_fails_before_translation(tmp_path)
         res = client.post(
             "/api/upload",
             files={"file": ("FactionMod.esp", f, "application/octet-stream")},
-            data={"config": json.dumps({"generate_voice": True})}
+            data={"config": json.dumps({"generate_voice": True})},
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
 
-    with patch("api.translate_entries", mock_translate), \
-         patch("api.generate_voice_file", mock_generate_voice):
+    with patch("api.translate_entries", mock_translate), patch("api.generate_voice_file", mock_generate_voice):
         messages = _run_websocket_job(job_id)
 
     assert jobs[job_id]["status"] == "error"
@@ -531,13 +522,14 @@ def test_websocket_preflight_missing_index_fails_fast(tmp_path):
     """INFO NAM1 without a resolvable TRDT index must fail fast with
     DSD_METADATA_MISSING before translation."""
     import struct
-    from tests.test_esp_and_voice import make_tes4_header, make_grup, make_record, make_subrecord
+
+    from tests.test_esp_and_voice import make_grup, make_record, make_subrecord, make_tes4_header
 
     mod_esp = tmp_path / "BrokenInfo.esp"
     info_rec = make_record(
-        b"INFO", 0x00000555,
-        make_subrecord(b"ANAM", struct.pack("<I", 0)) +
-        make_subrecord(b"NAM1", b"Response without TRDT\x00")
+        b"INFO",
+        0x00000555,
+        make_subrecord(b"ANAM", struct.pack("<I", 0)) + make_subrecord(b"NAM1", b"Response without TRDT\x00"),
     )
     mod_esp.write_bytes(make_tes4_header([]) + make_grup(b"INFO", info_rec))
 
@@ -545,7 +537,7 @@ def test_websocket_preflight_missing_index_fails_fast(tmp_path):
         res = client.post(
             "/api/upload",
             files={"file": ("BrokenInfo.esp", f, "application/octet-stream")},
-            data={"config": json.dumps({"generate_voice": False})}
+            data={"config": json.dumps({"generate_voice": False})},
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
@@ -564,10 +556,7 @@ def test_upload_esp_preserves_target_plugin_filename(tmp_path):
     esp.write_bytes(b"TES4 dummy")
 
     with open(esp, "rb") as f:
-        res = client.post(
-            "/api/upload",
-            files={"file": ("MyMaster.esm", f, "application/octet-stream")}
-        )
+        res = client.post("/api/upload", files={"file": ("MyMaster.esm", f, "application/octet-stream")})
     assert res.status_code == 200
     job = jobs[res.json()["job_id"]]
     assert job["target_plugin_filename"] == "MyMaster.esm"
@@ -581,10 +570,7 @@ def test_upload_json_has_no_target_plugin_filename(tmp_path):
     test_json.write_text('[{"FormID": "0001", "Text": "Hi"}]', encoding="utf-8")
 
     with open(test_json, "rb") as f:
-        res = client.post(
-            "/api/upload",
-            files={"file": ("ModA.json", f, "application/json")}
-        )
+        res = client.post("/api/upload", files={"file": ("ModA.json", f, "application/json")})
     assert res.status_code == 200
     job = jobs[res.json()["job_id"]]
     assert job["target_plugin_filename"] is None
@@ -598,10 +584,7 @@ def test_mo2_start_esp_capture_target_plugin_filename(tmp_path):
     mod_folder.mkdir(parents=True)
     (mod_folder / "CoolCompanion.esp").write_bytes(b"TES4 dummy")
 
-    res = client.post("/api/mo2/start", json={
-        "mo2_path": str(mo2_dir),
-        "mod_name": "CoolCompanion"
-    })
+    res = client.post("/api/mo2/start", json={"mo2_path": str(mo2_dir), "mod_name": "CoolCompanion"})
     assert res.status_code == 200
     job = jobs[res.json()["job_id"]]
     assert job["target_plugin_filename"] == "CoolCompanion.esp"
@@ -613,14 +596,9 @@ def test_mo2_start_json_has_no_target_plugin_filename(tmp_path):
     mo2_dir = tmp_path / "mods"
     mod_folder = mo2_dir / "TextMod"
     mod_folder.mkdir(parents=True)
-    (mod_folder / "strings.json").write_text(
-        '[{"FormID": "0001", "Text": "Hi"}]', encoding="utf-8"
-    )
+    (mod_folder / "strings.json").write_text('[{"FormID": "0001", "Text": "Hi"}]', encoding="utf-8")
 
-    res = client.post("/api/mo2/start", json={
-        "mo2_path": str(mo2_dir),
-        "mod_name": "TextMod"
-    })
+    res = client.post("/api/mo2/start", json={"mo2_path": str(mo2_dir), "mod_name": "TextMod"})
     assert res.status_code == 200
     job = jobs[res.json()["job_id"]]
     assert job["target_plugin_filename"] is None
@@ -648,7 +626,8 @@ def test_websocket_job_already_processing_rejects_concurrent_connection():
 
 def test_websocket_reconnect_completed_job():
     """A WebSocket connecting to a 'completed' job receives download_url, has_mo2, progress 100, and does NOT rerun any pipeline call site."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
+
     mock_translate = MagicMock()
     mock_llm = MagicMock()
     mock_free = MagicMock()
@@ -664,12 +643,14 @@ def test_websocket_reconnect_completed_job():
         "mod_name": "CoolMod",
     }
     try:
-        with patch("api.translate_entries", mock_translate), \
-             patch("api.create_openai_compatible_translator", mock_llm), \
-             patch("api.free_translator_callable", mock_free), \
-             patch("api.generate_voice_file", mock_generate_voice), \
-             patch("api.validate_dsd_entries", mock_validate_dsd), \
-             patch("api.export_to_dsd", mock_export_dsd):
+        with (
+            patch("api.translate_entries", mock_translate),
+            patch("api.create_openai_compatible_translator", mock_llm),
+            patch("api.free_translator_callable", mock_free),
+            patch("api.generate_voice_file", mock_generate_voice),
+            patch("api.validate_dsd_entries", mock_validate_dsd),
+            patch("api.export_to_dsd", mock_export_dsd),
+        ):
             with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
                 msg = ws.receive_json()
                 assert msg["status"] == "completed"
@@ -691,7 +672,8 @@ def test_websocket_reconnect_completed_job():
 
 def test_websocket_reconnect_error_job():
     """A WebSocket connecting to an 'error' job receives error fields, progress 100, and does NOT rerun any pipeline call site."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
+
     mock_translate = MagicMock()
     mock_llm = MagicMock()
     mock_free = MagicMock()
@@ -707,12 +689,14 @@ def test_websocket_reconnect_error_job():
         "progress": 100,
     }
     try:
-        with patch("api.translate_entries", mock_translate), \
-             patch("api.create_openai_compatible_translator", mock_llm), \
-             patch("api.free_translator_callable", mock_free), \
-             patch("api.generate_voice_file", mock_generate_voice), \
-             patch("api.validate_dsd_entries", mock_validate_dsd), \
-             patch("api.export_to_dsd", mock_export_dsd):
+        with (
+            patch("api.translate_entries", mock_translate),
+            patch("api.create_openai_compatible_translator", mock_llm),
+            patch("api.free_translator_callable", mock_free),
+            patch("api.generate_voice_file", mock_generate_voice),
+            patch("api.validate_dsd_entries", mock_validate_dsd),
+            patch("api.export_to_dsd", mock_export_dsd),
+        ):
             with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
                 msg = ws.receive_json()
                 assert msg["status"] == "error"
@@ -734,7 +718,8 @@ def test_websocket_reconnect_error_job():
 
 def test_websocket_reconnect_error_job_without_error_code():
     """A WebSocket connecting to an 'error' job without error_code returns None for error_code and does NOT rerun."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
+
     mock_translate = MagicMock()
     mock_llm = MagicMock()
     mock_free = MagicMock()
@@ -749,12 +734,14 @@ def test_websocket_reconnect_error_job_without_error_code():
         "progress": 100,
     }
     try:
-        with patch("api.translate_entries", mock_translate), \
-             patch("api.create_openai_compatible_translator", mock_llm), \
-             patch("api.free_translator_callable", mock_free), \
-             patch("api.generate_voice_file", mock_generate_voice), \
-             patch("api.validate_dsd_entries", mock_validate_dsd), \
-             patch("api.export_to_dsd", mock_export_dsd):
+        with (
+            patch("api.translate_entries", mock_translate),
+            patch("api.create_openai_compatible_translator", mock_llm),
+            patch("api.free_translator_callable", mock_free),
+            patch("api.generate_voice_file", mock_generate_voice),
+            patch("api.validate_dsd_entries", mock_validate_dsd),
+            patch("api.export_to_dsd", mock_export_dsd),
+        ):
             with client.websocket_connect(f"/ws/progress/{job_id}") as ws:
                 msg = ws.receive_json()
                 assert msg["status"] == "error"
@@ -787,7 +774,7 @@ def test_websocket_real_overlapping_connection_rejects_second(tmp_path):
         res = client.post(
             "/api/upload",
             files={"file": ("OverlapMod.json", f, "application/json")},
-            data={"config": json.dumps({"generate_voice": False})}
+            data={"config": json.dumps({"generate_voice": False})},
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
@@ -803,6 +790,7 @@ def test_websocket_real_overlapping_connection_rejects_second(tmp_path):
         first_ws_reached_pipeline.set()
         assert second_ws_checked.wait(timeout=5.0), "Timeout waiting for second WS check"
         from src.models import StringEntry
+
         return [StringEntry(form_id="0001", text="Hola mundo", is_dialog=False)]
 
     def run_first_ws():
@@ -861,7 +849,7 @@ def test_websocket_real_overlapping_connection_with_api_key_regression(tmp_path)
     uses create_openai_compatible_translator exactly once, never calls free_translator_callable,
     purges the key from memory, and rejects the second concurrent WebSocket connection."""
     import threading
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
 
     test_json = tmp_path / "ApiKeyOverlapMod.json"
     test_json.write_text('[{"FormID": "0001", "Text": "Translate with key"}]', encoding="utf-8")
@@ -870,7 +858,7 @@ def test_websocket_real_overlapping_connection_with_api_key_regression(tmp_path)
         res = client.post(
             "/api/upload",
             files={"file": ("ApiKeyOverlapMod.json", f, "application/json")},
-            data={"config": json.dumps({"api_key": "sk-secret-test-key", "generate_voice": False})}
+            data={"config": json.dumps({"api_key": "sk-secret-test-key", "generate_voice": False})},
         )
     assert res.status_code == 200
     job_id = res.json()["job_id"]
@@ -886,6 +874,7 @@ def test_websocket_real_overlapping_connection_with_api_key_regression(tmp_path)
         first_ws_reached_pipeline.set()
         assert second_ws_checked.wait(timeout=5.0), "Timeout waiting for second WS check"
         from src.models import StringEntry
+
         return [StringEntry(form_id="0001", text="Traducido con clave", is_dialog=False)]
 
     create_openai_compatible_translator = MagicMock(return_value=MagicMock())
@@ -893,9 +882,11 @@ def test_websocket_real_overlapping_connection_with_api_key_regression(tmp_path)
 
     def run_first_ws():
         try:
-            with patch("api.create_openai_compatible_translator", create_openai_compatible_translator), \
-                 patch("api.free_translator_callable", free_translator_callable), \
-                 patch("api.translate_entries", side_effect=mock_translate):
+            with (
+                patch("api.create_openai_compatible_translator", create_openai_compatible_translator),
+                patch("api.free_translator_callable", free_translator_callable),
+                patch("api.translate_entries", side_effect=mock_translate),
+            ):
                 with client.websocket_connect(f"/ws/progress/{job_id}") as ws1:
                     while True:
                         try:
@@ -1030,25 +1021,16 @@ def test_inject_state_gate_non_completed_job(tmp_path):
         "output_dir": str(tmp_path / "build"),
     }
     try:
-        res = client.post(f"/api/mo2/inject/{job_id}", json={
-            "mo2_path": str(mo2_dir),
-            "mod_name": "ModA"
-        })
+        res = client.post(f"/api/mo2/inject/{job_id}", json={"mo2_path": str(mo2_dir), "mod_name": "ModA"})
         assert res.status_code == 409
         assert "no ha finalizado" in res.json()["detail"]
 
         jobs[job_id]["status"] = "processing"
-        res_proc = client.post(f"/api/mo2/inject/{job_id}", json={
-            "mo2_path": str(mo2_dir),
-            "mod_name": "ModA"
-        })
+        res_proc = client.post(f"/api/mo2/inject/{job_id}", json={"mo2_path": str(mo2_dir), "mod_name": "ModA"})
         assert res_proc.status_code == 409
 
         jobs[job_id]["status"] = "error"
-        res_err = client.post(f"/api/mo2/inject/{job_id}", json={
-            "mo2_path": str(mo2_dir),
-            "mod_name": "ModA"
-        })
+        res_err = client.post(f"/api/mo2/inject/{job_id}", json={"mo2_path": str(mo2_dir), "mod_name": "ModA"})
         assert res_err.status_code == 409
     finally:
         jobs.pop(job_id, None)
@@ -1066,10 +1048,7 @@ def test_inject_state_gate_completed_missing_build_dir(tmp_path):
         "output_dir": str(tmp_path / "nonexistent_build_dir_xyz"),
     }
     try:
-        res = client.post(f"/api/mo2/inject/{job_id}", json={
-            "mo2_path": str(mo2_dir),
-            "mod_name": "ModA"
-        })
+        res = client.post(f"/api/mo2/inject/{job_id}", json={"mo2_path": str(mo2_dir), "mod_name": "ModA"})
         assert res.status_code == 400
         assert "No hay archivos generados para inyectar" in res.json()["detail"]
     finally:

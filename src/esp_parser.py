@@ -1,10 +1,10 @@
+import logging
 import struct
 import zlib
-import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+
 from src.models import StringEntry
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,7 @@ class RecordKey:
     Canonical record identifier across plugins and masters.
     object_id is the 24-bit local integer (form_id & 0x00FFFFFF).
     """
+
     plugin: str
     object_id: int
 
@@ -82,7 +83,7 @@ def _decode_string(raw_bytes: bytes) -> str:
             return cleaned.decode("latin1", errors="replace")
 
 
-def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, int, str, bytes, Optional[int]]]:
+def _iter_records(data: bytes) -> Iterator[tuple[bytes, int, int, str, bytes, int | None]]:
     """
     Yields (record_type, flags, form_id_val, form_id_hex, body, parent_dial_formid)
     for every record, entering GRUPs and tracking parent Topic Children GRUPs (grp_type == 7 in TES5).
@@ -97,22 +98,22 @@ def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, int, str, bytes, Op
         while grup_stack and offset >= grup_stack[-1][0]:
             grup_stack.pop()
 
-        tag = data[offset:offset+4]
+        tag = data[offset : offset + 4]
 
         if tag == b"GRUP":
-            rec_size = struct.unpack("<I", data[offset+4:offset+8])[0]
-            label_val = struct.unpack("<I", data[offset+8:offset+12])[0]
-            grp_type = struct.unpack("<i", data[offset+12:offset+16])[0]
+            rec_size = struct.unpack("<I", data[offset + 4 : offset + 8])[0]
+            label_val = struct.unpack("<I", data[offset + 8 : offset + 12])[0]
+            grp_type = struct.unpack("<i", data[offset + 12 : offset + 16])[0]
             grup_end = offset + rec_size
             grup_stack.append((grup_end, grp_type, label_val))
             offset += RECORD_HEADER_SIZE
             continue
 
-        rec_size = struct.unpack("<I", data[offset+4:offset+8])[0]
-        rec_flags = struct.unpack("<I", data[offset+8:offset+12])[0]
-        form_id_val = struct.unpack("<I", data[offset+12:offset+16])[0]
+        rec_size = struct.unpack("<I", data[offset + 4 : offset + 8])[0]
+        rec_flags = struct.unpack("<I", data[offset + 8 : offset + 12])[0]
+        form_id_val = struct.unpack("<I", data[offset + 12 : offset + 16])[0]
         form_id_hex = f"{form_id_val:08X}"
-        body = data[offset+RECORD_HEADER_SIZE:offset+RECORD_HEADER_SIZE+rec_size]
+        body = data[offset + RECORD_HEADER_SIZE : offset + RECORD_HEADER_SIZE + rec_size]
 
         if rec_flags & FLAG_COMPRESSED:
             if len(body) >= 4:
@@ -126,7 +127,7 @@ def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, int, str, bytes, Op
                 body = b""
 
         # Find enclosing Topic Children GRUP (grp_type == 7 in TES5)
-        parent_dial_formid: Optional[int] = None
+        parent_dial_formid: int | None = None
         for _g_end, g_type, g_label in reversed(grup_stack):
             if g_type == 7:
                 parent_dial_formid = g_label
@@ -136,14 +137,14 @@ def _iter_records(data: bytes) -> Iterator[Tuple[bytes, int, int, str, bytes, Op
         offset += RECORD_HEADER_SIZE + rec_size
 
 
-def _read_subrecords(body: bytes) -> Iterator[Tuple[bytes, bytes]]:
+def _read_subrecords(body: bytes) -> Iterator[tuple[bytes, bytes]]:
     """Yields (subrecord_type, payload) pairs for a record body."""
     offset = 0
     body_len = len(body)
     while offset + 6 <= body_len:
-        s_type = body[offset:offset+4]
-        s_size = struct.unpack("<H", body[offset+4:offset+6])[0]
-        yield s_type, body[offset+6:offset+6+s_size]
+        s_type = body[offset : offset + 4]
+        s_size = struct.unpack("<H", body[offset + 4 : offset + 6])[0]
+        yield s_type, body[offset + 6 : offset + 6 + s_size]
         offset += 6 + s_size
 
 
@@ -158,7 +159,7 @@ def _extract_masters_from_tes4(body: bytes) -> list[str]:
     return masters
 
 
-def _extract_record_editor_id(body: bytes) -> Optional[str]:
+def _extract_record_editor_id(body: bytes) -> str | None:
     """Returns a record's EDID when it is present and contains sane text."""
     for s_type, payload in _read_subrecords(body):
         if s_type == b"EDID" and payload:
@@ -169,14 +170,14 @@ def _extract_record_editor_id(body: bytes) -> Optional[str]:
     return None
 
 
-def _parse_info_response_number(payload: bytes) -> Optional[int]:
+def _parse_info_response_number(payload: bytes) -> int | None:
     """Decodes Skyrim INFO.TRDT's u8 Response number at offset 12."""
     if len(payload) < 13:
         return None
     return payload[12]
 
 
-def _parse_quest_objective_index(payload: bytes) -> Optional[int]:
+def _parse_quest_objective_index(payload: bytes) -> int | None:
     """Decodes Skyrim QUST.QOBJ Objective Index (u16 little-endian)."""
     if len(payload) < 2:
         return None
@@ -187,9 +188,9 @@ def _resolve_record_key(
     raw_form_id: int,
     current_plugin: str,
     masters: Sequence[str],
-    warned_esl: Optional[set[int]] = None,
-    warned_invalid_index: Optional[set[tuple[int, int]]] = None,
-) -> Optional[RecordKey]:
+    warned_esl: set[int] | None = None,
+    warned_invalid_index: set[tuple[int, int]] | None = None,
+) -> RecordKey | None:
     """
     Resolves a raw 32-bit FormID into a canonical RecordKey(plugin, object_id).
 
@@ -206,10 +207,7 @@ def _resolve_record_key(
         if warned_esl is None or 0xFE not in warned_esl:
             if warned_esl is not None:
                 warned_esl.add(0xFE)
-            logger.warning(
-                "ESL/light plugin FormID 0x%08X master resolution: not supported yet",
-                raw_form_id
-            )
+            logger.warning("ESL/light plugin FormID 0x%08X master resolution: not supported yet", raw_form_id)
         return None
 
     num_masters = len(masters)
@@ -225,7 +223,9 @@ def _resolve_record_key(
                 warned_invalid_index.add(inv_key)
             logger.warning(
                 "FormID 0x%08X has invalid master index %d (declared masters count: %d)",
-                raw_form_id, mod_index, num_masters
+                raw_form_id,
+                mod_index,
+                num_masters,
             )
         return None
 
@@ -233,6 +233,7 @@ def _resolve_record_key(
 @dataclass
 class MasterIndexData:
     """In-memory read-only index of master records required for VoiceType, Template, Actor, Quest, and Dialogue resolution."""
+
     plugin_name: str
     masters: list[str]
     npc_to_vtck: dict[RecordKey, int]
@@ -251,18 +252,18 @@ class MasterResolver:
     and their indexed data.
     """
 
-    def __init__(self, search_paths: Optional[Sequence[Path | str]] = None):
+    def __init__(self, search_paths: Sequence[Path | str] | None = None):
         self.search_paths: list[Path] = []
-        for p in (search_paths or []):
+        for p in search_paths or []:
             path_obj = Path(p)
             if path_obj.is_dir():
                 self.search_paths.append(path_obj)
             else:
                 logger.warning("Search path '%s' does not exist or is not a directory", p)
-        self._path_cache: dict[tuple[Path, str], Optional[Path]] = {}
-        self._cache: dict[Path, Optional[MasterIndexData]] = {}
+        self._path_cache: dict[tuple[Path, str], Path | None] = {}
+        self._cache: dict[Path, MasterIndexData | None] = {}
 
-    def find_master_file(self, master_name: str, origin_dir: Path) -> Optional[Path]:
+    def find_master_file(self, master_name: str, origin_dir: Path) -> Path | None:
         """Locates a master file case-insensitively in origin_dir or search_paths, with caching."""
         origin_resolved = origin_dir.resolve()
         target_lower = _norm_plugin(master_name)
@@ -272,7 +273,7 @@ class MasterResolver:
             return self._path_cache[cache_key]
 
         search_dirs = [origin_dir] + [p for p in self.search_paths if p != origin_dir]
-        found_path: Optional[Path] = None
+        found_path: Path | None = None
 
         for directory in search_dirs:
             if not directory.is_dir():
@@ -288,15 +289,12 @@ class MasterResolver:
                 logger.warning("Error accessing master search directory %s: %s", directory, err)
 
         if found_path is None:
-            logger.warning(
-                "Master file '%s' could not be found in search paths (origin: %s)",
-                master_name, origin_dir
-            )
+            logger.warning("Master file '%s' could not be found in search paths (origin: %s)", master_name, origin_dir)
 
         self._path_cache[cache_key] = found_path
         return found_path
 
-    def get_or_load_master(self, master_name: str, origin_dir: Path) -> Optional[MasterIndexData]:
+    def get_or_load_master(self, master_name: str, origin_dir: Path) -> MasterIndexData | None:
         """Loads and indexes master records in read-only mode, with in-memory caching."""
         master_path = self.find_master_file(master_name, origin_dir)
         if not master_path:
@@ -353,8 +351,8 @@ class MasterResolver:
                         qust_to_edid[rec_key] = _decode_string(payload).strip()
                         break
             elif tag == b"DIAL":
-                d_edid: Optional[str] = None
-                d_qnam: Optional[int] = None
+                d_edid: str | None = None
+                d_qnam: int | None = None
                 for s_type, payload in _read_subrecords(body):
                     if s_type == b"EDID":
                         d_edid = _decode_string(payload).strip()
@@ -413,7 +411,7 @@ def _find_npc_data(
     local_npc_name: dict[RecordKey, str],
     master_resolver: MasterResolver,
     origin_dir: Path,
-) -> tuple[Optional[int], Optional[int], Optional[str], str, list[str]]:
+) -> tuple[int | None, int | None, str | None, str, list[str]]:
     """
     Finds NPC record data, prioritizing the target plugin's own contained definitions
     and overrides before querying external master files.
@@ -457,7 +455,7 @@ def _find_dial_data(
     local_dial_to_qnam: dict[RecordKey, int],
     master_resolver: MasterResolver,
     origin_dir: Path,
-) -> tuple[Optional[str], Optional[int], str, list[str]]:
+) -> tuple[str | None, int | None, str, list[str]]:
     """
     Retrieves topic_edid and qnam FormID for a given DIAL RecordKey.
     Returns (topic_edid, qnam_raw_formid, owning_plugin, owning_masters).
@@ -492,7 +490,7 @@ def _find_quest_edid(
     local_qust_to_edid: dict[RecordKey, str],
     master_resolver: MasterResolver,
     origin_dir: Path,
-) -> Optional[str]:
+) -> str | None:
     """
     Retrieves quest_edid for a given QUST RecordKey.
     """
@@ -516,9 +514,9 @@ def _resolve_voice_type_for_npc(
     local_vtyp_edid: dict[RecordKey, str],
     master_resolver: MasterResolver,
     origin_dir: Path,
-    warned_esl: Optional[set[int]] = None,
-    warned_invalid_index: Optional[set[tuple[int, int]]] = None,
-) -> tuple[Optional[str], Optional[str]]:
+    warned_esl: set[int] | None = None,
+    warned_invalid_index: set[tuple[int, int]] | None = None,
+) -> tuple[str | None, str | None]:
     """
     Resolves the Actor Name and VoiceType EDID for a given speaker RecordKey.
     Traverses template inheritance (TPLT) if VTCK is not directly defined on the NPC.
@@ -527,10 +525,10 @@ def _resolve_voice_type_for_npc(
     Returns (actor_name, voice_type_edid).
     """
     visited_templates: set[RecordKey] = set()
-    curr_key: Optional[RecordKey] = speaker_key
+    curr_key: RecordKey | None = speaker_key
     depth = 0
     max_depth = 10
-    primary_actor_name: Optional[str] = None
+    primary_actor_name: str | None = None
 
     while curr_key is not None and depth < max_depth:
         if curr_key in visited_templates:
@@ -558,8 +556,11 @@ def _resolve_voice_type_for_npc(
         # Case 1: NPC has direct VTCK
         if vtck_raw is not None:
             vtck_key = _resolve_record_key(
-                vtck_raw, owning_plugin, owning_masters,
-                warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+                vtck_raw,
+                owning_plugin,
+                owning_masters,
+                warned_esl=warned_esl,
+                warned_invalid_index=warned_invalid_index,
             )
             if vtck_key is not None:
                 # Check if target plugin has an override/definition for this VTYP first
@@ -581,8 +582,11 @@ def _resolve_voice_type_for_npc(
         # Case 2: No direct VTCK, check TPLT inheritance
         if tplt_raw is not None:
             curr_key = _resolve_record_key(
-                tplt_raw, owning_plugin, owning_masters,
-                warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+                tplt_raw,
+                owning_plugin,
+                owning_masters,
+                warned_esl=warned_esl,
+                warned_invalid_index=warned_invalid_index,
             )
             continue
 
@@ -597,8 +601,8 @@ def _resolve_voice_type_for_npc(
 
 def parse_esp_file(
     filepath: str | Path,
-    master_search_paths: Optional[Sequence[Path | str]] = None,
-) -> List[StringEntry]:
+    master_search_paths: Sequence[Path | str] | None = None,
+) -> list[StringEntry]:
     """
     Parses a Skyrim Bethesda Plugin file (.esp, .esm, .esl) and extracts all
     translatable strings, quests, and dialogue responses into StringEntry items.
@@ -653,8 +657,7 @@ def parse_esp_file(
 
     for tag, _flags, form_id_val, _form_id_hex, body, _parent_dial in _iter_records(data):
         rec_key = _resolve_record_key(
-            form_id_val, plugin_name, local_masters,
-            warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+            form_id_val, plugin_name, local_masters, warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
         )
         if rec_key is None:
             continue
@@ -669,8 +672,8 @@ def parse_esp_file(
                     local_qust_to_edid[rec_key] = _decode_string(payload).strip()
                     break
         elif tag == b"DIAL":
-            d_edid: Optional[str] = None
-            d_qnam: Optional[int] = None
+            d_edid: str | None = None
+            d_qnam: int | None = None
             for s_type, payload in _read_subrecords(body):
                 if s_type == b"EDID":
                     d_edid = _decode_string(payload).strip()
@@ -711,26 +714,25 @@ def parse_esp_file(
         logger.warning(
             "Plugin '%s' has FLAG_LOCALIZED enabled. External .STRINGS parsing is not supported yet; "
             "skipping localized binary StringIDs to prevent translating invalid text.",
-            path.name
+            path.name,
         )
         return []
 
     # Pass 2: Extract translatable strings and resolve dialogue voice types
-    entries: List[StringEntry] = []
+    entries: list[StringEntry] = []
     # Indexed 1->N identity: (form_id, subrecord, string_index). Multi-response
     # INFO.NAM1 / QUST.NNAM records emit one entry per resolved index. For
     # string_index=None no index is ever invented, so unresolved-index
     # duplicates of the same (form_id, subrecord) collapse to the first
     # occurrence; the DSD layer fails fast on any unresolved indexed entry.
-    seen_keys: set[tuple[str, bytes, Optional[int]]] = set()
+    seen_keys: set[tuple[str, bytes, int | None]] = set()
 
     for tag, _flags, form_id_val, form_id_hex, body, parent_dial_formid in _iter_records(data):
         if tag not in INTERESTING_RECORDS:
             continue
 
         record_key = _resolve_record_key(
-            form_id_val, plugin_name, local_masters,
-            warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+            form_id_val, plugin_name, local_masters, warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
         )
         defining_plugin = None
         local_object_id = None
@@ -740,10 +742,10 @@ def parse_esp_file(
 
         record_type = tag.decode("ascii", errors="ignore")
         editor_id = _extract_record_editor_id(body)
-        speaker_formid: Optional[int] = None
-        info_qsti_formid: Optional[int] = None
-        quest_edid: Optional[str] = None
-        topic_edid: Optional[str] = None
+        speaker_formid: int | None = None
+        info_qsti_formid: int | None = None
+        quest_edid: str | None = None
+        topic_edid: str | None = None
 
         if tag == b"INFO":
             for s_type, payload in _read_subrecords(body):
@@ -754,8 +756,11 @@ def parse_esp_file(
 
             if parent_dial_formid is not None:
                 dial_key = _resolve_record_key(
-                    parent_dial_formid, plugin_name, local_masters,
-                    warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+                    parent_dial_formid,
+                    plugin_name,
+                    local_masters,
+                    warned_esl=warned_esl,
+                    warned_invalid_index=warned_invalid_index,
                 )
                 if dial_key is not None:
                     d_edid, qnam_raw, dial_owning_plugin, dial_owning_masters = _find_dial_data(
@@ -774,8 +779,11 @@ def parse_esp_file(
 
                     if target_qust_formid is not None:
                         qust_key = _resolve_record_key(
-                            target_qust_formid, qust_owning_plugin, qust_owning_masters,
-                            warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+                            target_qust_formid,
+                            qust_owning_plugin,
+                            qust_owning_masters,
+                            warned_esl=warned_esl,
+                            warned_invalid_index=warned_invalid_index,
                         )
                         if qust_key is not None:
                             quest_edid = _find_quest_edid(
@@ -787,8 +795,11 @@ def parse_esp_file(
                             )
             elif info_qsti_formid is not None:
                 qust_key = _resolve_record_key(
-                    info_qsti_formid, plugin_name, local_masters,
-                    warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+                    info_qsti_formid,
+                    plugin_name,
+                    local_masters,
+                    warned_esl=warned_esl,
+                    warned_invalid_index=warned_invalid_index,
                 )
                 if qust_key is not None:
                     quest_edid = _find_quest_edid(
@@ -799,13 +810,16 @@ def parse_esp_file(
                         path.parent,
                     )
 
-        actor_name: Optional[str] = None
-        voice_type: Optional[str] = None
+        actor_name: str | None = None
+        voice_type: str | None = None
 
         if speaker_formid is not None:
             speaker_key = _resolve_record_key(
-                speaker_formid, plugin_name, local_masters,
-                warned_esl=warned_esl, warned_invalid_index=warned_invalid_index
+                speaker_formid,
+                plugin_name,
+                local_masters,
+                warned_esl=warned_esl,
+                warned_invalid_index=warned_invalid_index,
             )
             if speaker_key is not None:
                 resolved_actor, resolved_voice = _resolve_voice_type_for_npc(
@@ -832,8 +846,8 @@ def parse_esp_file(
             else:
                 actor_name = f"Actor_{form_id_hex}"
 
-        current_info_response_index: Optional[int] = None
-        current_quest_objective_index: Optional[int] = None
+        current_info_response_index: int | None = None
+        current_quest_objective_index: int | None = None
 
         for s_type, payload in _read_subrecords(body):
             if tag == b"INFO" and s_type == b"TRDT":
@@ -844,7 +858,8 @@ def parse_esp_file(
                         warned_string_index.add(gap)
                         logger.warning(
                             "INFO %s has malformed TRDT (%d bytes); NAM1 index will remain unresolved",
-                            form_id_hex, len(payload)
+                            form_id_hex,
+                            len(payload),
                         )
                 continue
 
@@ -856,13 +871,12 @@ def parse_esp_file(
                         warned_string_index.add(gap)
                         logger.warning(
                             "QUST %s has malformed QOBJ (%d bytes); NNAM index will remain unresolved",
-                            form_id_hex, len(payload)
+                            form_id_hex,
+                            len(payload),
                         )
                 continue
 
-            is_text_subrecord = s_type in INTERESTING_SUBRECORDS or (
-                s_type == b"DNAM" and tag in DNAM_TEXT_RECORDS
-            )
+            is_text_subrecord = s_type in INTERESTING_SUBRECORDS or (s_type == b"DNAM" and tag in DNAM_TEXT_RECORDS)
             if not is_text_subrecord or not payload:
                 # A skipped NAM1/NNAM still consumes its pending index so the
                 # next indexed string cannot inherit a stale TRDT/QOBJ value.
@@ -880,18 +894,15 @@ def parse_esp_file(
                     current_quest_objective_index = None
                 continue
 
-            is_dialog = (tag == b"INFO" and s_type == b"NAM1")
-            string_index: Optional[int] = None
+            is_dialog = tag == b"INFO" and s_type == b"NAM1"
+            string_index: int | None = None
             if is_dialog:
                 string_index = current_info_response_index
                 if string_index is None:
                     gap = ("nam1_missing_trdt", form_id_hex)
                     if gap not in warned_string_index:
                         warned_string_index.add(gap)
-                        logger.warning(
-                            "INFO %s NAM1 has no valid preceding TRDT response number",
-                            form_id_hex
-                        )
+                        logger.warning("INFO %s NAM1 has no valid preceding TRDT response number", form_id_hex)
                 current_info_response_index = None
             elif tag == b"QUST" and s_type == b"NNAM":
                 string_index = current_quest_objective_index
@@ -899,10 +910,7 @@ def parse_esp_file(
                     gap = ("nnam_missing_qobj", form_id_hex)
                     if gap not in warned_string_index:
                         warned_string_index.add(gap)
-                        logger.warning(
-                            "QUST %s NNAM has no valid preceding QOBJ objective index",
-                            form_id_hex
-                        )
+                        logger.warning("QUST %s NNAM has no valid preceding QOBJ objective index", form_id_hex)
                 current_quest_objective_index = None
 
             unique_key = (form_id_hex, s_type, string_index)

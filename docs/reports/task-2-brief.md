@@ -19,18 +19,19 @@
 from src.models import StringEntry
 from src.translator import translate_entries
 
+
 def test_translate_entries():
     entries = [
         StringEntry(form_id="01", text="Hello", is_dialog=False),
-        StringEntry(form_id="02", text="Attack!", is_dialog=True, actor="Bandit")
+        StringEntry(form_id="02", text="Attack!", is_dialog=True, actor="Bandit"),
     ]
-    
+
     # We will pass a simple mock translator function
     def mock_api_call(text: str, context: str) -> str:
         return f"[ES] {text}"
-    
+
     result = translate_entries(entries, "spanish", api_callable=mock_api_call)
-    
+
     assert result[0].translated_text == "[ES] Hello"
     assert result[1].translated_text == "[ES] Attack!"
 ```
@@ -46,11 +47,15 @@ Expected: FAIL with "ImportError" or "function not defined".
 from typing import Callable, List
 from src.models import StringEntry
 
+
 def default_llm_call(text: str, context: str) -> str:
     # This is a placeholder for the actual LLM API call (OpenAI/Gemini)
     return f"Translated: {text}"
 
-def translate_entries(entries: List[StringEntry], target_lang: str, api_callable: Callable = default_llm_call) -> List[StringEntry]:
+
+def translate_entries(
+    entries: List[StringEntry], target_lang: str, api_callable: Callable = default_llm_call
+) -> List[StringEntry]:
     for entry in entries:
         context = f"Context: This is spoken by {entry.actor}." if entry.actor else "Context: UI or generic text."
         entry.translated_text = api_callable(entry.text, context)

@@ -1,7 +1,9 @@
 import asyncio
+
 import pytest
+
 from src.models import StringEntry
-from src.translator import translate_entries, default_llm_call
+from src.translator import default_llm_call, translate_entries
 
 
 @pytest.mark.asyncio
@@ -120,6 +122,7 @@ async def test_translate_entries_concurrency():
 
 def test_skyrim_glossary_entries():
     from src.translator import SKYRIM_GLOSSARY
+
     assert "Dragonborn" in SKYRIM_GLOSSARY
     assert SKYRIM_GLOSSARY["Dragonborn"] == "Sangre de Dragón"
     assert SKYRIM_GLOSSARY["Whiterun"] == "Carrera Blanca"
@@ -135,6 +138,7 @@ def test_skyrim_glossary_entries():
 @pytest.mark.asyncio
 async def test_openai_compatible_translator_no_key():
     from src.translator import create_openai_compatible_translator
+
     fn = create_openai_compatible_translator(api_key="")
     with pytest.raises(RuntimeError, match="api_key"):
         await fn("Sword", "Context: weapon")
@@ -144,15 +148,15 @@ async def test_openai_compatible_translator_no_key():
 async def test_openai_compatible_translator_mock_success(monkeypatch):
     import io
     import json
+
     from src.translator import create_openai_compatible_translator
 
-    fake_response_data = {
-        "choices": [{"message": {"content": "Espada de hierro"}}]
-    }
+    fake_response_data = {"choices": [{"message": {"content": "Espada de hierro"}}]}
 
     class MockResponse:
         def __enter__(self):
             return io.BytesIO(json.dumps(fake_response_data).encode("utf-8"))
+
         def __exit__(self, *args):
             pass
 
@@ -160,9 +164,12 @@ async def test_openai_compatible_translator_mock_success(monkeypatch):
         return MockResponse()
 
     import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
-    fn = create_openai_compatible_translator(api_key="sk-test-key", api_base="https://api.openai.com/v1", model="gpt-4o-mini")
+    fn = create_openai_compatible_translator(
+        api_key="sk-test-key", api_base="https://api.openai.com/v1", model="gpt-4o-mini"
+    )
     res = await fn("Iron Sword", "Context: weapon")
     assert res == "Espada de hierro"
 
@@ -174,8 +181,9 @@ async def test_openai_compatible_translator_mock_error(monkeypatch):
     def mock_urlopen_error(req, timeout=30):
         raise urllib.error.URLError("Network unreachable")
 
-    import urllib.request
     import urllib.error
+    import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen_error)
 
     fn = create_openai_compatible_translator(api_key="sk-test-key")
@@ -188,6 +196,7 @@ async def test_openai_compatible_translator_includes_glossary_in_payload(monkeyp
     import io
     import json
     import urllib.request
+
     from src.translator import create_openai_compatible_translator
 
     captured_payload = None
@@ -195,6 +204,7 @@ async def test_openai_compatible_translator_includes_glossary_in_payload(monkeyp
     class MockResponse:
         def __enter__(self):
             return io.BytesIO(json.dumps({"choices": [{"message": {"content": "Traducido"}}]}).encode("utf-8"))
+
         def __exit__(self, *args):
             pass
 
@@ -220,13 +230,17 @@ async def test_openai_compatible_translator_non_spanish_isolation(monkeypatch):
     import io
     import json
     import urllib.request
+
     from src.translator import create_openai_compatible_translator
 
     captured_payload = None
 
     class MockResponse:
         def __enter__(self):
-            return io.BytesIO(json.dumps({"choices": [{"message": {"content": "Voyage à Blancherive"}}]}).encode("utf-8"))
+            return io.BytesIO(
+                json.dumps({"choices": [{"message": {"content": "Voyage à Blancherive"}}]}).encode("utf-8")
+            )
+
         def __exit__(self, *args):
             pass
 
@@ -250,6 +264,7 @@ async def test_openai_compatible_translator_non_spanish_isolation(monkeypatch):
 
 def test_translation_provider_enum():
     from src.translator import TranslationProvider
+
     assert TranslationProvider.OPENAI_COMPATIBLE == "openai_compatible"
     assert TranslationProvider.OLLAMA == "ollama"
     assert TranslationProvider.UNOFFICIAL_GTX == "unofficial_gtx"
@@ -259,6 +274,7 @@ def test_free_translator_transparent_user_agent(monkeypatch):
     import io
     import json
     import urllib.request
+
     from src.free_translator import translate_free_text_sync
 
     captured_request = None
@@ -289,6 +305,7 @@ def test_free_translator_warning_emitted_once_per_process(monkeypatch):
     import json
     import urllib.request
     import warnings
+
     import src.free_translator
     from src.free_translator import translate_free_text_sync
 
@@ -343,6 +360,7 @@ def test_free_translator_glossary_protection_flow(monkeypatch):
     import json
     import urllib.parse
     import urllib.request
+
     from src.free_translator import translate_free_text_sync
 
     captured_url = None
@@ -377,6 +395,7 @@ def test_free_translator_glossary_protection_flow(monkeypatch):
 def test_free_translator_error_handling(monkeypatch):
     import urllib.error
     import urllib.request
+
     from src.free_translator import translate_free_text_sync
 
     def mock_urlopen_fail(req, timeout=10):
@@ -393,6 +412,7 @@ async def test_free_translator_callable_and_create(monkeypatch):
     import io
     import json
     import urllib.request
+
     from src.free_translator import create_free_translator, free_translator_callable
 
     class MockResponse:
@@ -422,6 +442,7 @@ async def test_free_translator_concurrent_warning_thread_safety(monkeypatch, cap
     import logging
     import urllib.request
     import warnings
+
     import src.free_translator
     from src.free_translator import free_translator_callable
 
@@ -441,10 +462,7 @@ async def test_free_translator_concurrent_warning_thread_safety(monkeypatch, cap
     with caplog.at_level(logging.WARNING, logger="src.free_translator"):
         with warnings.catch_warnings(record=True) as recorded_warnings:
             warnings.simplefilter("always")
-            tasks = [
-                free_translator_callable(f"Hello {i}", "Context: UI")
-                for i in range(20)
-            ]
+            tasks = [free_translator_callable(f"Hello {i}", "Context: UI") for i in range(20)]
             results = await asyncio.gather(*tasks)
 
             assert len(results) == 20
@@ -455,3 +473,43 @@ async def test_free_translator_concurrent_warning_thread_safety(monkeypatch, cap
 
     gtx_logs = [record for record in caplog.records if "GTX" in record.message]
     assert len(gtx_logs) == 1
+
+
+def test_validate_api_base_allows_valid_endpoints():
+    from src.translator import _validate_api_base
+
+    assert _validate_api_base("https://api.openai.com/v1") == "https://api.openai.com/v1"
+    assert _validate_api_base("http://localhost:11434/v1/") == "http://localhost:11434/v1"
+    assert _validate_api_base("http://127.0.0.1:8000") == "http://127.0.0.1:8000"
+    assert _validate_api_base("https://openrouter.ai/api/v1") == "https://openrouter.ai/api/v1"
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "",
+        "   ",
+        "ftp://example.com/api",
+        "file:///etc/passwd",
+        "gopher://evil.com",
+        "http://169.254.169.254/latest/meta-data",
+        "http://169.254.169.254:80",
+        "https://[fe80::1]/secrets",
+        "not_a_url",
+    ],
+)
+def test_validate_api_base_rejects_unauthorized_destinations(bad_url):
+    from src.translator import _validate_api_base
+
+    with pytest.raises(ValueError):
+        _validate_api_base(bad_url)
+
+
+def test_create_openai_compatible_translator_fails_fast_on_invalid_api_base():
+    from src.translator import create_openai_compatible_translator
+
+    with pytest.raises(ValueError, match=r"Destino no permitido|Esquema no permitido|carece de host|no puede estar"):
+        create_openai_compatible_translator(
+            api_key="sk-test",
+            api_base="http://169.254.169.254/latest/meta-data",
+        )

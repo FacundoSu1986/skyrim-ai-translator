@@ -22,21 +22,23 @@ from src.models import StringEntry
 from src.tts_generator import generate_voice_file
 import asyncio
 
+
 @pytest.mark.asyncio
 async def test_generate_voice_file(tmp_path):
     out_dir = tmp_path / "Sound"
     entry = StringEntry(form_id="0001", text="Hello", translated_text="Hola", is_dialog=True)
-    
+
     # Mocking edge_tts internally for the test
     class MockCommunicate:
         def __init__(self, text, voice):
             pass
+
         async def save(self, filepath):
             Path(filepath).parent.mkdir(parents=True, exist_ok=True)
             Path(filepath).write_text("audio data")
-            
+
     success = await generate_voice_file(entry, str(out_dir), "es-ES-AlvaroNeural", tts_class=MockCommunicate)
-    
+
     assert success is True
     expected_file = out_dir / f"{entry.form_id}.wav"
     assert expected_file.exists()
@@ -55,13 +57,16 @@ import os
 import edge_tts
 from src.models import StringEntry
 
-async def generate_voice_file(entry: StringEntry, output_dir: str, voice: str = "es-ES-AlvaroNeural", tts_class=edge_tts.Communicate) -> bool:
+
+async def generate_voice_file(
+    entry: StringEntry, output_dir: str, voice: str = "es-ES-AlvaroNeural", tts_class=edge_tts.Communicate
+) -> bool:
     if not entry.is_dialog or not entry.translated_text:
         return False
-        
+
     os.makedirs(output_dir, exist_ok=True)
     file_path = os.path.join(output_dir, f"{entry.form_id}.wav")
-    
+
     communicate = tts_class(entry.translated_text, voice)
     await communicate.save(file_path)
     return True

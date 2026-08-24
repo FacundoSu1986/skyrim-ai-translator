@@ -3,15 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from src.models import StringEntry
 from src.dsd_exporter import (
-    export_to_dsd,
-    validate_dsd_entries,
-    DSDExportError,
+    DSDDuplicateIdentityError,
     DSDMetadataMissingError,
     DSDUnsupportedTypeError,
-    DSDDuplicateIdentityError,
+    export_to_dsd,
+    validate_dsd_entries,
 )
+from src.models import StringEntry
 
 
 def make_entry(**overrides) -> StringEntry:
@@ -35,6 +34,7 @@ def read_json(path: Path):
 
 # --- A. Root shape -----------------------------------------------------------
 
+
 def test_dsd_root_is_list_not_dict(tmp_path: Path):
     output_file = tmp_path / "dsd.json"
     export_to_dsd(
@@ -54,6 +54,7 @@ def test_dsd_empty_exportable_set_writes_empty_list(tmp_path: Path):
 
 # --- B. Non-indexed types carry no index -------------------------------------
 
+
 def test_npc_full_is_exported_without_index(tmp_path: Path):
     output_file = tmp_path / "npc.json"
     export_to_dsd(
@@ -68,18 +69,27 @@ def test_npc_full_is_exported_without_index(tmp_path: Path):
 
 # --- C/D. Indexed 1->N survival ----------------------------------------------
 
+
 def test_two_info_nam1_same_form_id_both_survive(tmp_path: Path):
     output_file = tmp_path / "multi_response.json"
     export_to_dsd(
         [
             make_entry(
-                form_id="01000333", local_object_id=0x000333, record_type="INFO",
-                subrecord_type="NAM1", string_index=0, translated_text="Primera respuesta",
+                form_id="01000333",
+                local_object_id=0x000333,
+                record_type="INFO",
+                subrecord_type="NAM1",
+                string_index=0,
+                translated_text="Primera respuesta",
                 is_dialog=True,
             ),
             make_entry(
-                form_id="01000333", local_object_id=0x000333, record_type="INFO",
-                subrecord_type="NAM1", string_index=4, translated_text="Segunda respuesta",
+                form_id="01000333",
+                local_object_id=0x000333,
+                record_type="INFO",
+                subrecord_type="NAM1",
+                string_index=4,
+                translated_text="Segunda respuesta",
                 is_dialog=True,
             ),
         ],
@@ -101,12 +111,20 @@ def test_two_quest_nnam_indices_both_survive(tmp_path: Path):
     export_to_dsd(
         [
             make_entry(
-                form_id="01000444", local_object_id=0x000444, record_type="QUST",
-                subrecord_type="NNAM", string_index=10, translated_text="Encuentra la espada",
+                form_id="01000444",
+                local_object_id=0x000444,
+                record_type="QUST",
+                subrecord_type="NNAM",
+                string_index=10,
+                translated_text="Encuentra la espada",
             ),
             make_entry(
-                form_id="01000444", local_object_id=0x000444, record_type="QUST",
-                subrecord_type="NNAM", string_index=50, translated_text="Vuelve con el Jarl",
+                form_id="01000444",
+                local_object_id=0x000444,
+                record_type="QUST",
+                subrecord_type="NNAM",
+                string_index=50,
+                translated_text="Vuelve con el Jarl",
             ),
         ],
         output_file,
@@ -117,6 +135,7 @@ def test_two_quest_nnam_indices_both_survive(tmp_path: Path):
 
 
 # --- E. Same record, different subrecords ------------------------------------
+
 
 def test_full_and_desc_of_same_record_do_not_collide(tmp_path: Path):
     output_file = tmp_path / "book.json"
@@ -134,6 +153,7 @@ def test_full_and_desc_of_same_record_do_not_collide(tmp_path: Path):
 
 
 # --- F/G. Defining plugin semantics ------------------------------------------
+
 
 def test_target_new_record_uses_target_plugin(tmp_path: Path):
     output_file = tmp_path / "new.json"
@@ -153,6 +173,7 @@ def test_target_override_of_skyrim_uses_defining_plugin_and_local_id(tmp_path: P
 
 
 # --- H/I. None vs empty-string translations -----------------------------------
+
 
 def test_empty_translation_is_exported(tmp_path: Path):
     output_file = tmp_path / "empty_string.json"
@@ -181,21 +202,26 @@ def test_preflight_validates_entries_without_translations(tmp_path: Path):
 
     # Unrepresentable type -> fails even without a translation.
     with pytest.raises(DSDUnsupportedTypeError):
-        validate_dsd_entries(
-            [make_entry(translated_text=None, record_type="FACT")]
-        )
+        validate_dsd_entries([make_entry(translated_text=None, record_type="FACT")])
 
     # Missing index on an indexed type -> fails even without a translation.
     with pytest.raises(DSDMetadataMissingError):
-        validate_dsd_entries([
-            make_entry(
-                translated_text=None, record_type="INFO", subrecord_type="NAM1",
-                string_index=None, form_id="01000333", local_object_id=0x000333,
-            )
-        ])
+        validate_dsd_entries(
+            [
+                make_entry(
+                    translated_text=None,
+                    record_type="INFO",
+                    subrecord_type="NAM1",
+                    string_index=None,
+                    form_id="01000333",
+                    local_object_id=0x000333,
+                )
+            ]
+        )
 
 
 # --- J. Error taxonomy --------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "overrides",
@@ -205,15 +231,21 @@ def test_preflight_validates_entries_without_translations(tmp_path: Path):
         pytest.param({"record_type": None}, id="record_type"),
         pytest.param(
             {
-                "record_type": "INFO", "subrecord_type": "NAM1", "string_index": None,
-                "form_id": "01000333", "local_object_id": 0x000333,
+                "record_type": "INFO",
+                "subrecord_type": "NAM1",
+                "string_index": None,
+                "form_id": "01000333",
+                "local_object_id": 0x000333,
             },
             id="info_nam1_without_index",
         ),
         pytest.param(
             {
-                "record_type": "QUST", "subrecord_type": "NNAM", "string_index": None,
-                "form_id": "01000444", "local_object_id": 0x000444,
+                "record_type": "QUST",
+                "subrecord_type": "NNAM",
+                "string_index": None,
+                "form_id": "01000444",
+                "local_object_id": 0x000444,
             },
             id="quest_nnam_without_index",
         ),
@@ -257,8 +289,11 @@ def test_dial_full_is_supported(tmp_path: Path):
     """Upstream DSD 1.4.3 supports DIAL FULL (kRuntime1); the parser extracts
     it, so it must pass validation and export with its exact type string."""
     dial = make_entry(
-        form_id="01000999", local_object_id=0x000999, record_type="DIAL",
-        subrecord_type="FULL", translated_text="Tema de diálogo",
+        form_id="01000999",
+        local_object_id=0x000999,
+        record_type="DIAL",
+        subrecord_type="FULL",
+        translated_text="Tema de diálogo",
     )
 
     validate_dsd_entries([dial])  # must PASS
@@ -331,12 +366,20 @@ def test_duplicate_indexed_identity_with_distinct_indices_is_allowed(tmp_path: P
     export_to_dsd(
         [
             make_entry(
-                record_type="INFO", subrecord_type="NAM1", string_index=0,
-                form_id="01000333", local_object_id=0x000333, translated_text="Uno",
+                record_type="INFO",
+                subrecord_type="NAM1",
+                string_index=0,
+                form_id="01000333",
+                local_object_id=0x000333,
+                translated_text="Uno",
             ),
             make_entry(
-                record_type="INFO", subrecord_type="NAM1", string_index=4,
-                form_id="01000333", local_object_id=0x000333, translated_text="Dos",
+                record_type="INFO",
+                subrecord_type="NAM1",
+                string_index=4,
+                form_id="01000333",
+                local_object_id=0x000333,
+                translated_text="Dos",
             ),
         ],
         output_file,
@@ -345,6 +388,7 @@ def test_duplicate_indexed_identity_with_distinct_indices_is_allowed(tmp_path: P
 
 
 # --- Formatting / filesystem --------------------------------------------------
+
 
 def test_dsd_json_formatting_and_utf8(tmp_path: Path):
     output_file = tmp_path / "formatted.json"
