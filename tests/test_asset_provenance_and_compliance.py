@@ -147,3 +147,30 @@ def test_third_party_notices_and_compliance_review_exist():
     # Verify compliance taxonomy markers
     for rating in ["VERIFIED", "CONTRACTUAL RISK", "REQUIRES LEGAL REVIEW"]:
         assert rating in compliance_text, f"Expected compliance taxonomy rating '{rating}' in COMPLIANCE-REVIEW.md"
+
+
+def test_frontend_site_config_and_seo_plugin_structure():
+    """Verifies that site.config.js and vite.config.js define canonical URLs, metadata, and JSON-LD schema generator."""
+    site_config_js = FRONTEND / "site.config.js"
+    vite_config_js = FRONTEND / "vite.config.js"
+    index_html = FRONTEND / "index.html"
+
+    assert site_config_js.exists(), f"Missing site.config.js at {site_config_js}"
+    assert vite_config_js.exists(), f"Missing vite.config.js at {vite_config_js}"
+    assert index_html.exists(), f"Missing index.html at {index_html}"
+
+    site_content = site_config_js.read_text(encoding="utf-8")
+    assert "defaultSiteUrl" in site_content
+    assert "getBasePath" in site_content
+    assert "generateSoftwareApplicationSchema" in site_content
+    assert "siteConfig" in site_content
+
+    vite_content = vite_config_js.read_text(encoding="utf-8")
+    assert "seoPlugin" in vite_content
+    assert "robots.txt" in vite_content
+    assert "sitemap.xml" in vite_content
+    assert "application/ld+json" in vite_content
+
+    html_content = index_html.read_text(encoding="utf-8")
+    assert "<!-- %SEO_METADATA% -->" in html_content or "<!-- SEO_PLACEHOLDER -->" in html_content
+    assert "<noscript>" in html_content
