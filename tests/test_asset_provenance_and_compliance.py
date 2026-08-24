@@ -9,6 +9,7 @@ Verifies:
 """
 
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -174,3 +175,26 @@ def test_frontend_site_config_and_seo_plugin_structure():
     html_content = index_html.read_text(encoding="utf-8")
     assert "<!-- %SEO_METADATA% -->" in html_content or "<!-- SEO_PLACEHOLDER -->" in html_content
     assert "<noscript>" in html_content
+
+
+def test_frontend_branding_assets_and_webmanifest():
+    """Verifies that all branding icons, social graphics, and webmanifest exist and are well-formed."""
+    public_dir = FRONTEND / "public"
+    manifest_file = public_dir / "site.webmanifest"
+    favicon = public_dir / "favicon.svg"
+    og_image = public_dir / "social" / "og-image.png"
+    apple_touch_icon = public_dir / "icons" / "apple-touch-icon.png"
+    icon_192 = public_dir / "icons" / "icon-192.png"
+    icon_512 = public_dir / "icons" / "icon-512.png"
+
+    assert favicon.exists(), f"Missing {favicon}"
+    assert og_image.exists(), f"Missing {og_image}"
+    assert apple_touch_icon.exists(), f"Missing {apple_touch_icon}"
+    assert icon_192.exists(), f"Missing {icon_192}"
+    assert icon_512.exists(), f"Missing {icon_512}"
+    assert manifest_file.exists(), f"Missing {manifest_file}"
+
+    manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+    assert manifest_data["name"] == "Skyrim AI Translator"
+    assert manifest_data["short_name"] == "Skyrim Translator"
+    assert len(manifest_data["icons"]) >= 3
