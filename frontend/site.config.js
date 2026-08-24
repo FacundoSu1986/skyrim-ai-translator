@@ -35,12 +35,54 @@ export function getBasePath(url = siteConfig?.siteUrl || defaultSiteUrl) {
   }
 }
 
+/**
+ * Generates structured Schema.org JSON-LD for SoftwareApplication reflecting truthful capabilities.
+ *
+ * @param {typeof siteConfig} [config] - Site configuration object.
+ * @returns {Record<string, unknown>} Schema.org JSON-LD object.
+ */
+export function generateSoftwareApplicationSchema(config = siteConfig) {
+  const rawUrl = config?.siteUrl || defaultSiteUrl;
+  const siteUrl = rawUrl.endsWith('/') ? rawUrl : `${rawUrl}/`;
+  const repoUrl = config?.repoUrl || 'https://github.com/FacundoSu1986/skyrim-ai-translator';
+  const description = config?.description || 'AI-assisted Skyrim SE/AE mod localization tool with binary ESP/ESM parsing, lore-aware translation, DSD export, neural TTS staging, and Mod Organizer 2 integration.';
+
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Skyrim AI Translator',
+    applicationCategory: 'MultimediaApplication',
+    applicationSubCategory: 'DeveloperApplication',
+    operatingSystem: 'Windows, Linux, macOS',
+    description,
+    url: siteUrl,
+    downloadUrl: repoUrl,
+    sameAs: [repoUrl],
+    featureList: [
+      'Binary ESP/ESM parsing',
+      'Lore glossary translation',
+      'DSD export',
+      'Neural TTS staging',
+      'MO2 integration',
+    ],
+    offers: {
+      '@type': 'Offer',
+      price: '0',
+      priceCurrency: 'USD',
+    },
+  };
+}
+
+export const generateJsonLd = generateSoftwareApplicationSchema;
+
 export const siteConfig = {
   siteUrl: defaultSiteUrl,
   repoUrl: 'https://github.com/FacundoSu1986/skyrim-ai-translator',
   title: 'Skyrim AI Translator | Skyrim SE/AE Mod Localization',
   description: 'AI-assisted Skyrim SE/AE mod localization tool with binary ESP/ESM parsing, lore-aware translation, DSD export, neural TTS staging, and Mod Organizer 2 integration.',
   getBasePath,
+  generateSoftwareApplicationSchema,
+  generateJsonLd,
 };
 
 export default siteConfig;
