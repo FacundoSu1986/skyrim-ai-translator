@@ -1,0 +1,48 @@
+{
+  "game_root": "G:\\SteamLibrary\\steamapps\\common\\Skyrim Special Edition",
+  "tools": {
+    "creation_kit": {
+      "path": "G:\\SteamLibrary\\steamapps\\common\\Skyrim Special Edition\\CreationKit.exe",
+      "present": true,
+      "size_bytes": 48685408,
+      "sha256": "f64a37d623ddf624453c269cf82cb8d7ada8a48213d17d2b62a7d9dac87d66c8",
+      "file_version": "1.7.99.0"
+    },
+    "skyrim_executable": {
+      "path": "G:\\SteamLibrary\\steamapps\\common\\Skyrim Special Edition\\SkyrimSE.exe",
+      "present": true,
+      "size_bytes": 37157144,
+      "sha256": "c434208894f07f604b852f29b8edc3a58c4de63de783373733e72b2b73f33be9",
+      "file_version": "1.6.1170.0"
+    },
+    "lip_generator": {
+      "path": "G:\\SteamLibrary\\steamapps\\common\\Skyrim Special Edition\\Tools\\LipGen\\LipGenerator\\LipGenerator.exe",
+      "present": true,
+      "size_bytes": 796512,
+      "sha256": "59053b83014c2a8152e7bec0b7670683637df723d75bf50f970a13281b14b619",
+      "file_version": "1.0.0.2"
+    },
+    "fonix_data": {
+      "path": "G:\\SteamLibrary\\steamapps\\common\\Skyrim Special Edition\\Tools\\LipGen\\LipGenerator\\FonixData.cdf",
+      "present": true,
+      "size_bytes": 6282885,
+      "sha256": "f9edcecf534f1c1bf187ee5ebf62b2856c574af441f1a6b83a7fb639c6d27974"
+    },
+    "xwma_encode": {
+      "path": "G:\\SteamLibrary\\steamapps\\common\\Skyrim Special Edition\\Tools\\Audio\\xwmaencode.exe",
+      "present": true,
+      "size_bytes": 681304,
+      "sha256": "3fd5d07f720f8a15386bc0ef4771f8d38b6e1567fc5e342187d8dc08ff92738d",
+      "file_version": "9.28.1876.0"
+    },
+    "lip_fuzer_reference": {
+      "path": "G:\\SteamLibrary\\steamapps\\common\\Skyrim Special Edition\\Tools\\LipGen\\LipFuzer\\LIPFuzer.exe",
+      "present": true,
+      "size_bytes": 24416,
+      "sha256": "1f9d00f8a29e81dadd56e63ad917a44fd6ab975e4d39e383a6e66d802f37a181",
+      "file_version": "1.0.0.0"
+    }
+  },
+  "missing": [],
+  "pipeline_ready": true
+}
