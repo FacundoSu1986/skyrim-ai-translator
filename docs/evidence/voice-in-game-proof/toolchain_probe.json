@@ -44,5 +44,6 @@
     }
   },
   "missing": [],
-  "pipeline_ready": true
+  "toolchain_present": true,
+  "execution_verified_by_this_probe": false
 }

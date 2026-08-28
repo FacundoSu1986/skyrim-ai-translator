@@ -1,10 +1,13 @@
-"""Read-only external toolchain probe for the in-game voice asset spike (PR #9).
+"""Read-only external toolchain probe for the in-game voice asset proof.
 
 Discovers the proprietary Creation Kit audio toolchain on the host machine,
 records SHA-256 hashes and executable versions, and writes a JSON evidence
-artifact consumed by ``docs/skyrim_voice_asset_spike.md`` follow-ups.
+artifact consumed by ``docs/evidence/voice-in-game-proof/``.
 
-Strictly read-only: no game files are modified, no tools are executed.
+Strictly read-only: no game files are modified and no tools are executed.
+Presence of the toolchain files (``toolchain_present``) is NOT proof of
+execution; the probe never fabricates runtime evidence
+(``execution_verified_by_this_probe`` is always ``false``).
 """
 
 from __future__ import annotations
@@ -48,9 +51,7 @@ def discover_game_root() -> Path:
         root = Path(installed_path)
         if root.is_dir():
             return root
-    raise ToolchainProbeError(
-        "No se pudo localizar la instalación de Skyrim Special Edition en el registro de Windows"
-    )
+    raise ToolchainProbeError("No se pudo localizar la instalación de Skyrim Special Edition en el registro de Windows")
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -85,10 +86,7 @@ def get_file_version(path: Path) -> str | None:
         return None
     file_version_ms = int.from_bytes(raw[8:12], "little")
     file_version_ls = int.from_bytes(raw[12:16], "little")
-    return (
-        f"{file_version_ms >> 16}.{file_version_ms & 0xFFFF}."
-        f"{file_version_ls >> 16}.{file_version_ls & 0xFFFF}"
-    )
+    return f"{file_version_ms >> 16}.{file_version_ms & 0xFFFF}.{file_version_ls >> 16}.{file_version_ls & 0xFFFF}"
 
 
 def probe_toolchain(game_root: Path | None = None) -> dict[str, Any]:
@@ -117,22 +115,25 @@ def probe_toolchain(game_root: Path | None = None) -> dict[str, Any]:
         "game_root": str(root),
         "tools": tools,
         "missing": missing,
-        "pipeline_ready": not missing,
+        "toolchain_present": not missing,
+        "execution_verified_by_this_probe": False,
     }
 
 
 def main() -> int:
-    """CLI entry point: write the probe evidence JSON next to the spike documentation."""
+    """CLI entry point: write the probe evidence JSON next to the voice proof evidence."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     report = probe_toolchain()
-    out_path = Path(__file__).resolve().parents[1] / "docs" / "evidence" / "pr9" / "toolchain_probe.json"
+    out_path = (
+        Path(__file__).resolve().parents[1] / "docs" / "evidence" / "voice-in-game-proof" / "toolchain_probe.json"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    out_path.write_text(json.dumps(report, indent=2), encoding="utf-8", newline="\n")
     logger.info("Evidence written to %s", out_path)
-    if not report["pipeline_ready"]:
+    if not report["toolchain_present"]:
         logger.warning("Missing toolchain components: %s", ", ".join(report["missing"]))
         return 1
-    logger.info("Full toolchain present under %s", report["game_root"])
+    logger.info("Full toolchain present under %s (not executed by this probe)", report["game_root"])
     return 0
 
 
