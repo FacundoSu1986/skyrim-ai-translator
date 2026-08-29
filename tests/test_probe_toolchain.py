@@ -44,7 +44,9 @@ def test_get_file_version_rejects_null_or_short_version_resource(monkeypatch: py
 
     for pointer, block_length in ((None, 16), (123456, 8)):
         fake = SimpleNamespace(version=_FakeVersionApi(pointer, block_length))
-        monkeypatch.setattr(ctypes, "windll", fake)
+        # ctypes.windll only exists on Windows; the probe must still be testable
+        # on non-Windows CI runners, so allow creating the attribute.
+        monkeypatch.setattr(ctypes, "windll", fake, raising=False)
         assert pt.get_file_version(Path("SkyrimSE.exe")) is None
 
 
