@@ -103,8 +103,19 @@ class BsaVoiceLoadError(RuntimeError):
     """Raised when a voices BSA header/name table is unsupported or corrupt."""
 
 
-def _read_exact(handle: BinaryIO, size: int, label: str) -> bytes:
-    """Read exactly ``size`` bytes or fail fast with a bounds error."""
+def _read_exact(handle: BinaryIO, size: int, label: str, file_size: int | None = None) -> bytes:
+    """Read exactly ``size`` bytes or fail fast with a bounds error.
+
+    When ``file_size`` is provided, a header-controlled ``size`` is validated
+    against the bytes actually remaining in the archive before any read is
+    attempted. A corrupt header requesting more than the archive holds raises
+    ``BsaVoiceLoadError`` instead of attempting an oversized allocation, so the
+    promise of bounded memory and fail-fast truncation is preserved.
+    """
+    if file_size is not None:
+        remaining = file_size - handle.tell()
+        if size < 0 or size > remaining:
+            raise BsaVoiceLoadError(f"{label}: header requests {size} bytes but only {remaining} remain in the archive")
     data = handle.read(size)
     if len(data) < size:
         raise BsaVoiceLoadError(f"{label}: truncated (wanted {size} bytes, got {len(data)})")
@@ -172,10 +183,14 @@ class BsaVoiceIndex:
         self._load()
 
     def _load(self) -> None:
+        """Parse the 36-byte header, folder records, and name table (read-only)."""
         with self.path.open("rb") as handle:
             label = self.path.name
+            handle.seek(0, 2)
+            file_size = handle.tell()
+            handle.seek(0)
 
-            header = _read_exact(handle, BSA_HEADER_SIZE, f"{label}: header")
+            header = _read_exact(handle, BSA_HEADER_SIZE, f"{label}: header", file_size)
             magic, version, folder_records_offset = struct.unpack_from("<4sIi", header, 0)
             if magic != BSA_MAGIC:
                 raise BsaVoiceLoadError(f"{label}: not a BSA (magic={magic!r})")
@@ -202,7 +217,9 @@ class BsaVoiceIndex:
                 )
 
             # 1) Folder records array.
-            folder_records = _read_exact(handle, folder_count * BSA_FOLDER_RECORD_SIZE, f"{label}: folder records")
+            folder_records = _read_exact(
+                handle, folder_count * BSA_FOLDER_RECORD_SIZE, f"{label}: folder records", file_size
+            )
             counts: list[int] = []
             for i in range(folder_count):
                 count = struct.unpack_from("<I", folder_records, i * BSA_FOLDER_RECORD_SIZE + 8)[0]
@@ -221,14 +238,14 @@ class BsaVoiceIndex:
             record_hashes: list[int] = []
             interleaved_name_bytes = 0
             for i, count in enumerate(counts):
-                length = _read_exact(handle, 1, f"{label}: folder name {i} length")[0]
-                raw_name = _read_exact(handle, length, f"{label}: folder name {i}")
+                length = _read_exact(handle, 1, f"{label}: folder name {i} length", file_size)[0]
+                raw_name = _read_exact(handle, length, f"{label}: folder name {i}", file_size)
                 if not raw_name.endswith(b"\x00"):
                     raise BsaVoiceLoadError(f"{label}: folder name {i} is not NUL-terminated")
                 folder_names.append(raw_name[:-1].decode("ascii", errors="replace").lower())
                 interleaved_name_bytes += 1 + length
                 for _ in range(count):
-                    record = _read_exact(handle, BSA_FILE_RECORD_SIZE, f"{label}: file record in folder {i}")
+                    record = _read_exact(handle, BSA_FILE_RECORD_SIZE, f"{label}: file record in folder {i}", file_size)
                     record_hashes.append(struct.unpack_from("<Q", record, 0)[0])
             # Header totalFolderNameLength counts length-byte values (name +
             # NUL) but not the prefix bytes themselves; the on-disk region
@@ -241,7 +258,7 @@ class BsaVoiceIndex:
 
             # 3) Global file-name block: exactly totalFileNameLength bytes of
             #    consecutive NUL-terminated names covering all fileCount files.
-            file_name_block = _read_exact(handle, total_file_name_length, f"{label}: file name table")
+            file_name_block = _read_exact(handle, total_file_name_length, f"{label}: file name table", file_size)
             file_names = file_name_block.split(b"\x00")[:-1]
             if len(file_names) != file_count:
                 raise BsaVoiceLoadError(f"{label}: parsed {len(file_names)} file names != header {file_count}")
@@ -567,6 +584,7 @@ def collect_candidates(data: bytes) -> tuple[list[dict[str, Any]], dict[str, int
             c["voice_type"],
             c["quest_edid"],
             c["topic_edid"],
+            c["info_form_id"],
         )
     )
     return candidates, stats
@@ -637,13 +655,14 @@ def _render_markdown(
         f"Funnel: `{json.dumps(stats, sort_keys=True)}`",
         f"BSA metadata: `{json.dumps(bsa_meta, sort_keys=True)}`",
         "",
-        "| # | NPC (EDID) | Speaker | ANAM | VoiceType | Quest | Topic | DIAL | INFO | Resp | CTDA | Child INFO | Risk |",
+        "| # | NPC (EDID) | Speaker | ANAM | VoiceType | Quest | Topic | DIAL | INFO | TRDT Response # | CTDA | Child INFO | Risk |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for i, c in enumerate(matched, start=1):
+        topic_cell = f"`{c['topic_edid']}`" if c["topic_edid"] else "_(no EDID)_"
         lines.append(
             f"| {i} | `{c['npc_edid']}` | {c['speaker_record_type']} | `{c['anam_form_hex']}` "
-            f"| {c['voice_type']} | {c['quest_edid']} | `{c['topic_edid']}` "
+            f"| {c['voice_type']} | {c['quest_edid']} | {topic_cell} "
             f"| `{c['dial_form_hex']}` | `{c['info_form_hex']}` | {c['response_number']} "
             f"| {c['ctda_count']} | {c['child_info_count']} | {c['runtime_risk']} |"
         )
@@ -661,8 +680,9 @@ def _render_markdown(
     ]
     for c in matched:
         anam = c["anam_form_hex"][2:]
+        topic_display = c["topic_edid"] or "_(no EDID)_"
         lines += [
-            f"# {c['npc_edid']} ({c['voice_type']}) - {c['quest_edid']} / {c['topic_edid']} [{c['runtime_risk']}]",
+            f"# {c['npc_edid']} ({c['voice_type']}) - {c['quest_edid']} / {topic_display} [{c['runtime_risk']}]",
             f"player.placeatme {anam} 1",
             "",
             f"# In the console, select/click the newly spawned {c['npc_edid']}.",

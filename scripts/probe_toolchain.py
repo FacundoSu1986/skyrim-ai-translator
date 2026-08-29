@@ -40,7 +40,13 @@ class ToolchainProbeError(RuntimeError):
 
 def discover_game_root() -> Path:
     """Locate the Skyrim Special Edition install directory via the Windows registry."""
-    import winreg
+    try:
+        import winreg
+    except ModuleNotFoundError as exc:
+        raise ToolchainProbeError(
+            "La detección de la instalación de Skyrim Special Edition requiere Windows "
+            f"(módulo 'winreg' no disponible en esta plataforma): {exc}"
+        ) from exc
 
     for hive in (winreg.HKEY_LOCAL_MACHINE,):
         try:
@@ -78,6 +84,10 @@ def get_file_version(path: Path) -> str | None:
     if not ctypes.windll.version.VerQueryValueW(  # type: ignore[attr-defined]
         data, "\\", ctypes.byref(value), ctypes.byref(length)
     ):
+        return None
+    # Refuse a null pointer or a too-short version block before reading it, so
+    # the Win32 probe cannot dereference an invalid/short version resource.
+    if value.value is None or length.value < 16:
         return None
     # VS_FIXEDFILEINFO layout: dwSignature(4), dwStrucVersion(4),
     # dwFileVersionMS(4), dwFileVersionLS(4).

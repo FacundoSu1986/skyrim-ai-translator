@@ -53,8 +53,12 @@ def _vtyp(form_id: int, edid: str) -> bytes:
     return _record(b"VTYP", form_id, _edid(edid))
 
 
-def _npc(form_id: int, edid: str, voice_type_form: int) -> bytes:
-    return _record(b"NPC_", form_id, _edid(edid) + _sub(b"VTCK", _form(voice_type_form)))
+def _npc(form_id: int, edid: str, voice_type_form: int, template_form: int | None = None) -> bytes:
+    """Build an NPC_ record; ``template_form`` optionally adds a TPLT chain link."""
+    body = _edid(edid) + _sub(b"VTCK", _form(voice_type_form))
+    if template_form is not None:
+        body += _sub(b"TPLT", _form(template_form))
+    return _record(b"NPC_", form_id, body)
 
 
 def _qust(form_id: int, edid: str) -> bytes:
@@ -76,10 +80,12 @@ def _info(
     quest_form: int,
     response: int = 1,
     ctda_count: int = 0,
+    trdt_count: int = 1,
 ) -> bytes:
+    """Build an INFO record; ``trdt_count``>1 simulates multi-response records."""
     body = _sub(b"ANAM", _form(speaker_form)) + _sub(b"QSTI", _form(quest_form))
     body += _sub(b"CTDA", b"\x00" * 32) * ctda_count
-    body += _sub(b"TRDT", b"\x00" * 12 + bytes([response]))
+    body += _sub(b"TRDT", b"\x00" * 12 + bytes([response])) * trdt_count
     body += _sub(b"NAM1", _form(1))
     return _record(b"INFO", form_id, body)
 
@@ -193,6 +199,32 @@ def test_t2_dial_with_exactly_one_info_child_survives(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Response-number semantics: single TRDT, response number is a raw value
+# ---------------------------------------------------------------------------
+
+
+def test_single_trdt_with_response_number_two_is_valid() -> None:
+    """A single TRDT whose response-number byte is 2 passes single_response."""
+    plugin = b"".join(
+        [
+            _vtyp(VTYP_FID, "MaleNord"),
+            _npc(NPC_FID, "TestNord", VTYP_FID),
+            _qust(QUEST_FID, QUEST_EDID),
+            _dial(DIAL_FID, DIAL_EDID, QUEST_FID),
+            _grup(DIAL_FID, 7, _info(INFO_FID, NPC_FID, QUEST_FID, response=2)),
+        ]
+    )
+
+    candidates, stats = collect_candidates(plugin)
+
+    assert stats["single_response"] == 1
+    assert stats["single_child_dial"] == 1
+    assert len(candidates) == 1
+    assert candidates[0]["response_number"] == 2
+    assert candidates[0]["basename"].endswith("_2")
+
+
+# ---------------------------------------------------------------------------
 # T3/T4: exact full-path FUZ matching
 # ---------------------------------------------------------------------------
 
@@ -231,13 +263,62 @@ def test_t4_correct_full_path_is_exact_match(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# TPLT template-chain resolution (NPC_ VTCK local id 0 ignored, cycle safe)
+# ---------------------------------------------------------------------------
+
+
+def _chained_plugin(template_npc: int, chained_npc: int) -> bytes:
+    return b"".join(
+        [
+            _vtyp(VTYP_FID, "MaleNord"),
+            _npc(template_npc, "TemplateNord", VTYP_FID),
+            _npc(chained_npc, "ChainedNord", 0, template_form=template_npc),
+            _qust(QUEST_FID, QUEST_EDID),
+            _dial(DIAL_FID, DIAL_EDID, QUEST_FID),
+            _grup(DIAL_FID, 7, _info(INFO_FID, chained_npc, QUEST_FID)),
+        ]
+    )
+
+
+def test_t14_vtck_local_zero_falls_through_to_tplt_chain() -> None:
+    """T14: VTCK with local object id 0 is ignored and the TPLT chain resolves VTYP."""
+    template_npc, chained_npc = 0x00000210, 0x00000211
+
+    candidates, stats = collect_candidates(_chained_plugin(template_npc, chained_npc))
+
+    assert stats["voice_resolved"] == 1
+    assert len(candidates) == 1
+    assert candidates[0]["voice_type"] == "MaleNord"
+
+
+def test_t15_tplt_cycle_terminates_without_voicetype() -> None:
+    """T15: a TPLT cycle ends via the seen-set instead of looping forever."""
+    npc_a, npc_b = 0x00000220, 0x00000221
+    plugin = b"".join(
+        [
+            _vtyp(VTYP_FID, "MaleNord"),
+            _npc(npc_a, "CycleA", 0, template_form=npc_b),
+            _npc(npc_b, "CycleB", 0, template_form=npc_a),
+            _qust(QUEST_FID, QUEST_EDID),
+            _dial(DIAL_FID, DIAL_EDID, QUEST_FID),
+            _grup(DIAL_FID, 7, _info(INFO_FID, npc_a, QUEST_FID)),
+        ]
+    )
+
+    candidates, stats = collect_candidates(plugin)
+
+    assert stats["voice_resolved"] == 0
+    assert candidates == []
+
+
+# ---------------------------------------------------------------------------
 # T5: corrupt / truncated BSA fail-fast
 # ---------------------------------------------------------------------------
 
 
 def _flip_record_hash(data: bytearray) -> bytes:
     """Corrupt the first file-record name hash inside the interleaved region."""
-    folder_name = b"sound\\voice\\skyrim.esm\\malenord\x00"
+    folder_name = _voice_folder(_single_candidate()[0]["voice_type"]).encode("ascii") + b"\x00"
     offset = 36 + 24 + 1 + len(folder_name)
     data[offset] = (data[offset] + 1) % 0x100
     return bytes(data)
@@ -252,6 +333,14 @@ def _flip_record_hash(data: bytearray) -> bytes:
         pytest.param(
             lambda data: data[:8] + struct.pack("<i", 999) + data[12:],
             id="unsupported-folder-records-offset",
+        ),
+        pytest.param(
+            lambda data: data[:16] + struct.pack("<I", 0x7FFFFFFF) + data[20:],
+            id="oversized-header-folder-count",
+        ),
+        pytest.param(
+            lambda data: data[:28] + struct.pack("<I", 0x7FFFFFF0) + data[32:],
+            id="oversized-total-file-name-length",
         ),
         pytest.param(
             lambda data: data[:12] + struct.pack("<I", 0x0) + data[16:],
@@ -501,6 +590,35 @@ def test_t11_rendered_procedure_selects_spawned_reference_before_say(tmp_path: P
 
 
 # ---------------------------------------------------------------------------
+# Deterministic ordering: info_form_id tie-breaker
+# ---------------------------------------------------------------------------
+
+
+def test_candidates_tied_on_all_rank_keys_order_by_info_form_id() -> None:
+    """Candidates tied on rank/voice/quest/topic are ordered by info_form_id."""
+    info_452, info_451, info_453 = 0x00000452, 0x00000451, 0x00000453
+    plugin = b"".join(
+        [
+            _vtyp(VTYP_FID, "MaleNord"),
+            _npc(NPC_FID, "TestNord", VTYP_FID),
+            _qust(QUEST_FID, QUEST_EDID),
+            # Empty topic EDIDs: all three candidates tie on topic too.
+            _dial(0x00000441, "", QUEST_FID),
+            _dial(0x00000442, "", QUEST_FID),
+            _dial(0x00000443, "", QUEST_FID),
+            # Deliberately non-ascending info_form_id file order.
+            _grup(0x00000441, 7, _info(info_452, NPC_FID, QUEST_FID)),
+            _grup(0x00000442, 7, _info(info_451, NPC_FID, QUEST_FID)),
+            _grup(0x00000443, 7, _info(info_453, NPC_FID, QUEST_FID)),
+        ]
+    )
+
+    candidates, _ = collect_candidates(plugin)
+
+    assert [c["info_form_id"] for c in candidates] == [info_451, info_452, info_453]
+
+
+# ---------------------------------------------------------------------------
 # T12: persisted BSA validation counts prove the hash audit
 # ---------------------------------------------------------------------------
 
@@ -566,9 +684,69 @@ def test_t13_empty_topic_edid_with_all_gates_and_exact_fuz_may_classify_low(tmp_
     assert matched[0]["runtime_risk"] == "LOW"
 
 
-def test_counters_follow_funnel_order(tmp_path: Path) -> None:
-    """Evidence counters are monotone across the structural funnel."""
-    _, stats = collect_candidates(_valid_plugin())
+def test_counters_follow_funnel_order() -> None:
+    """Counters decrease strictly at every funnel stage via staged failures."""
+    voiceless_npc = 0x00000202
+    unknown_quest_form = 0x00000399
+
+    def _info_without_anam(form_id: int) -> bytes:
+        body = _sub(b"QSTI", _form(QUEST_FID)) + _sub(b"TRDT", b"\x00" * 12 + b"\x01") + _sub(b"NAM1", _form(1))
+        return _record(b"INFO", form_id, body)
+
+    plugin = b"".join(
+        [
+            _vtyp(VTYP_FID, "MaleNord"),
+            _npc(NPC_FID, "TestNord", VTYP_FID),
+            _npc(voiceless_npc, "VoicelessNord", 0),
+            _tact(TALKING_ACTIVATOR_FID, "MagicActivator"),
+            _qust(QUEST_FID, QUEST_EDID),
+            # Stage 1: no ANAM (two INFOs).
+            _dial(0x00000411, "DialNoAnam", QUEST_FID),
+            _grup(0x00000411, 7, _info_without_anam(0x00000421)),
+            _dial(0x00000412, "DialNoAnam2", QUEST_FID),
+            _grup(0x00000412, 7, _info_without_anam(0x00000422)),
+            # Stage 2: TACT speaker (two INFOs).
+            _dial(0x00000413, "DialTact", QUEST_FID),
+            _grup(0x00000413, 7, _info(0x00000423, TALKING_ACTIVATOR_FID, QUEST_FID)),
+            _dial(0x00000414, "DialTact2", QUEST_FID),
+            _grup(0x00000414, 7, _info(0x00000424, TALKING_ACTIVATOR_FID, QUEST_FID)),
+            # Stage 3: VTCK local object id 0, no template (two INFOs).
+            _dial(0x00000415, "DialVoiceless", QUEST_FID),
+            _grup(0x00000415, 7, _info(0x00000425, voiceless_npc, QUEST_FID)),
+            _dial(0x00000416, "DialVoiceless2", QUEST_FID),
+            _grup(0x00000416, 7, _info(0x00000426, voiceless_npc, QUEST_FID)),
+            # Stage 4: two TRDT responses (two INFOs).
+            _dial(0x00000417, "DialDouble", QUEST_FID),
+            _grup(
+                0x00000417,
+                7,
+                _info(0x00000427, NPC_FID, QUEST_FID, trdt_count=2)
+                + _info(0x00000428, NPC_FID, QUEST_FID, trdt_count=2),
+            ),
+            # Stage 5: one CTDA condition (two INFOs).
+            _dial(0x00000418, "DialCtda", QUEST_FID),
+            _grup(
+                0x00000418,
+                7,
+                _info(0x00000429, NPC_FID, QUEST_FID, ctda_count=1)
+                + _info(0x0000042A, NPC_FID, QUEST_FID, ctda_count=1),
+            ),
+            # Stage 6: two clean single-child candidates; one quest unresolvable.
+            _dial(0x00000419, "DialClean", QUEST_FID),
+            _grup(0x00000419, 7, _info(0x0000042B, NPC_FID, QUEST_FID)),
+            _dial(0x0000041A, "DialUnknownQuest", unknown_quest_form),
+            _grup(0x0000041A, 7, _info(0x0000042C, NPC_FID, QUEST_FID)),
+            # Stage 7: one DIAL with two clean children (cardinality reject).
+            _dial(0x0000041B, "DialShared", QUEST_FID),
+            _grup(
+                0x0000041B,
+                7,
+                _info(0x0000042D, NPC_FID, QUEST_FID) + _info(0x0000042E, NPC_FID, QUEST_FID),
+            ),
+        ]
+    )
+
+    candidates, stats = collect_candidates(plugin)
 
     ordered = (
         "infos_total",
@@ -581,5 +759,9 @@ def test_counters_follow_funnel_order(tmp_path: Path) -> None:
         "quest_resolved",
     )
     values = [stats[name] for name in ordered]
-    assert values == sorted(values, reverse=True)
-    assert all(value >= 1 for value in values)
+    assert values == [14, 12, 10, 8, 6, 4, 2, 1]
+    from itertools import pairwise
+
+    assert all(left > right for left, right in pairwise(values))
+    assert len(candidates) == 1
+    assert candidates[0]["info_form_id"] == 0x0000042B
