@@ -16,12 +16,20 @@
     "Skyrim - Voices_en0.bsa": {
       "size_bytes": 1807969854,
       "indexed_voice_paths": 75408,
-      "name_table_bytes": 2709902
+      "name_table_bytes": 2709902,
+      "header_file_count": 75408,
+      "parsed_file_names": 75408,
+      "hash_validated": 75408,
+      "hash_mismatches": 0
     },
     "Skyrim - Voices_es0.bsa": {
       "size_bytes": 1879699949,
       "indexed_voice_paths": 74716,
-      "name_table_bytes": 2685442
+      "name_table_bytes": 2685442,
+      "header_file_count": 74716,
+      "parsed_file_names": 74716,
+      "hash_validated": 74716,
+      "hash_mismatches": 0
     }
   },
   "runtime_controls": [
@@ -46,7 +54,10 @@
       "basename": "DA01__000A2C3F_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleUniqueAzura\\DA01__000A2C3F_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femaleuniqueazura\\da01__000a2c3f_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "MEDIUM",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleUniqueAzura"
@@ -73,10 +84,13 @@
       "basename": "DA01__000A2C45_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\MaleElfHaughty\\DA01__000A2C45_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\maleelfhaughty\\da01__000a2c45_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "LOW",
       "runtime_risk_reasons": [
-        "ordinary NPC_, generic voice, early quest, single child, exact FUZ"
+        "ordinary NPC_, generic voice, early quest-prefix heuristic, single child, exact vanilla FUZ match"
       ]
     },
     {
@@ -100,7 +114,10 @@
       "basename": "MG07__00080109_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080109_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080109_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType CrDragonPriestVoice",
@@ -128,7 +145,10 @@
       "basename": "MG07__00080107_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080107_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080107_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType CrDragonPriestVoice",
@@ -156,7 +176,10 @@
       "basename": "MG07__00080104_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080104_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080104_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType CrDragonPriestVoice",
@@ -184,7 +207,10 @@
       "basename": "MG07__00080102_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080102_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080102_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType CrDragonPriestVoice",
@@ -212,7 +238,10 @@
       "basename": "MG07__0008010A_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__0008010A_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__0008010a_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType CrDragonPriestVoice",
@@ -240,7 +269,10 @@
       "basename": "MG07__00080105_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080105_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080105_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType CrDragonPriestVoice",
@@ -268,7 +300,10 @@
       "basename": "MG07__00080106_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080106_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080106_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType CrDragonPriestVoice",
@@ -296,7 +331,10 @@
       "basename": "MG07__00080103_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080103_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080103_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType CrDragonPriestVoice",
@@ -324,7 +362,10 @@
       "basename": "MG07__0008010B_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__0008010B_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__0008010b_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType CrDragonPriestVoice",
@@ -352,7 +393,10 @@
       "basename": "MQ305__000ED359_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrUniqueAlduin\\MQ305__000ED359_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\cruniquealduin\\mq305__000ed359_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType CrUniqueAlduin",
@@ -380,7 +424,10 @@
       "basename": "MS14__0003664F_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleChild\\MS14__0003664F_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalechild\\ms14__0003664f_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleChild",
@@ -408,7 +455,10 @@
       "basename": "MS06Start__0009D9D7_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCommander\\MS06Start__0009D9D7_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecommander\\ms06start__0009d9d7_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "MEDIUM",
       "runtime_risk_reasons": [
         "non-early quest prefix MS06Start"
@@ -435,7 +485,10 @@
       "basename": "MS06Start__0009D9D9_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCommander\\MS06Start__0009D9D9_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecommander\\ms06start__0009d9d9_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "MEDIUM",
       "runtime_risk_reasons": [
         "non-early quest prefix MS06Start"
@@ -462,7 +515,10 @@
       "basename": "MS06Start__0009D9E4_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCommander\\MS06Start__0009D9E4_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecommander\\ms06start__0009d9e4_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "MEDIUM",
       "runtime_risk_reasons": [
         "non-early quest prefix MS06Start"
@@ -489,7 +545,10 @@
       "basename": "dunAnsilvundQST__00093BC0_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCondescending\\dunAnsilvundQST__00093BC0_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecondescending\\dunansilvundqst__00093bc0_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleCondescending",
@@ -517,7 +576,10 @@
       "basename": "dunAnsilvundQST__00093BCB_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCondescending\\dunAnsilvundQST__00093BCB_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecondescending\\dunansilvundqst__00093bcb_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleCondescending",
@@ -545,7 +607,10 @@
       "basename": "dunAnsilvundQST__00093BC8_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCondescending\\dunAnsilvundQST__00093BC8_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecondescending\\dunansilvundqst__00093bc8_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleCondescending",
@@ -573,7 +638,10 @@
       "basename": "dunAnsilvundQST__000B646A_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCondescending\\dunAnsilvundQST__000B646A_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecondescending\\dunansilvundqst__000b646a_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleCondescending",
@@ -601,7 +669,10 @@
       "basename": "DA11HallScene__0007D935_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleSultry\\DA11HallScene__0007D935_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalesultry\\da11hallscene__0007d935_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleSultry",
@@ -630,7 +701,10 @@
       "basename": "DA11HallScene__0007D93F_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleSultry\\DA11HallScene__0007D93F_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalesultry\\da11hallscene__0007d93f_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleSultry",
@@ -659,7 +733,10 @@
       "basename": "DA11HallScene__00099CF8_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleSultry\\DA11HallScene__00099CF8_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalesultry\\da11hallscene__00099cf8_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleSultry",
@@ -688,7 +765,10 @@
       "basename": "DA02__0004D8C8_1",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleUniqueBoethiah\\DA02__0004D8C8_1.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femaleuniqueboethiah\\da02__0004d8c8_1.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleUniqueBoethiah",
@@ -716,7 +796,10 @@
       "basename": "DA02__0008117A_2",
       "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleUniqueBoethiah\\DA02__0008117A_2.fuz",
       "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femaleuniqueboethiah\\da02__0008117a_2.fuz",
-      "source_bsa": "Skyrim - Voices_en0.bsa",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
       "runtime_risk": "HIGH",
       "runtime_risk_reasons": [
         "non-generic/special VoiceType FemaleUniqueBoethiah",

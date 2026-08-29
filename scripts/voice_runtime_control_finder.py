@@ -1,8 +1,9 @@
 """Find vanilla INFO dialogue lines suitable as an in-game voice runtime control.
 
 Read-only analysis of ``Skyrim.esm`` and the vanilla voice BSAs, producing a
-strictly-ranked shortlist of dialogue records verifiable in-game with
-``player.placeatme`` + ``say``.
+strictly-ranked shortlist of dialogue records prepared for manual runtime
+validation in-game with ``player.placeatme`` + ``say``. LOW risk is a heuristic,
+never a runtime-proven control.
 
 A candidate MUST be deterministic at runtime:
 
@@ -20,6 +21,12 @@ A candidate MUST be deterministic at runtime:
    vanilla voices BSA. Only an exact equality between the normalized expected
    path and the normalized BSA path counts; basename-only existence is not
    accepted.
+
+The pipeline order is contractual: structural candidates are collected first
+(no risk assigned), then exact BSA paths are matched, then exact-match
+metadata is populated, and only then is runtime risk classified. Structural
+candidates without an exact FUZ match keep ``runtime_risk`` unset (``None``)
+and can never be LOW.
 
 The BSA index is built strictly from BSA header/name-table metadata using the
 real record sizes and totals (no fixed-size read window, no payload
@@ -63,6 +70,9 @@ BSA_FILE_RECORD_SIZE = 16
 BSA_ARCHIVE_FLAG_FILE_NAMES = 0x1
 BSA_ARCHIVE_FLAG_FOLDER_NAMES = 0x2
 
+# Preferred/early quest-EDID prefix heuristic: a naming-convention signal used
+# to rank candidates. It does NOT prove runtime quest availability and never
+# upgrades a candidate on its own.
 EARLY_QUEST_PREFIXES = ("MQ101", "MQ102", "MQ103", "MS01", "MS02", "MS03", "DA01", "Favor")
 
 _COMMON_GENERIC_VOICES = frozenset(
@@ -139,6 +149,12 @@ class BsaVoiceIndex:
       names, sequentially paired with the file records above.
     - Every mapped name must reproduce its file-record hash low 32 bits,
       which proves the folder/name/record pairing instead of assuming it.
+
+    Validation counters (``header_file_count``, ``parsed_file_names``,
+    ``hash_validated``, ``hash_mismatches``) substantiate the empirical proof
+    and are persisted into the evidence metadata: a successful index requires
+    ``header_file_count == parsed_file_names == hash_validated`` with
+    ``hash_mismatches == 0``.
     """
 
     def __init__(self, path: Path) -> None:
@@ -146,6 +162,10 @@ class BsaVoiceIndex:
         self.full_paths: set[str] = set()  # lowercased "folder\\filename.ext"
         self.folder_files: dict[str, set[str]] = {}
         self.name_table_bytes = 0
+        self.header_file_count = 0
+        self.parsed_file_names = 0
+        self.hash_validated = 0
+        self.hash_mismatches = 0
         self._load()
 
     def _load(self) -> None:
@@ -183,6 +203,7 @@ class BsaVoiceIndex:
                 counts.append(count)
             if sum(counts) != file_count:
                 raise BsaVoiceLoadError(f"{label}: folder counts {sum(counts)} != header fileCount {file_count}")
+            self.header_file_count = file_count
 
             # 2) Interleaved region: per folder, in record order, a
             #    length-prefixed NUL-terminated folder name followed by
@@ -220,6 +241,7 @@ class BsaVoiceIndex:
                 raise BsaVoiceLoadError(
                     f"{label}: file-name bytes do not tile the header totalFileNameLength {total_file_name_length}"
                 )
+            self.parsed_file_names = len(file_names)
 
             self.name_table_bytes = interleaved_name_bytes + total_file_name_length
 
@@ -234,7 +256,9 @@ class BsaVoiceIndex:
                         raise BsaVoiceLoadError(f"{label}: non-.fuz entry {raw!r} in a voices archive is unsupported")
                     stem = raw[:-4]
                     if _tes5_name_hash_low32(stem) != record_hashes[cursor] & 0xFFFFFFFF:
+                        self.hash_mismatches += 1
                         raise BsaVoiceLoadError(f"{label}: name-hash mismatch at file index {cursor} ({raw!r})")
+                    self.hash_validated += 1
                     bucket.add(stem.decode("ascii", errors="replace").lower() + ".fuz")
                     cursor += 1
                 self.folder_files[folder_key] = bucket
@@ -246,6 +270,19 @@ class BsaVoiceIndex:
     def contains(self, folder: str, filename: str) -> bool:
         """Confirm an exact lowercased ``folder\\filename`` path exists."""
         return f"{folder.lower()}\\{filename.lower()}" in self.full_paths
+
+
+def _bsa_meta_for(path: Path, index: BsaVoiceIndex) -> dict[str, int]:
+    """Persisted per-archive validation metadata substantiating the BSA index proof."""
+    return {
+        "size_bytes": path.stat().st_size,
+        "indexed_voice_paths": len(index.full_paths),
+        "name_table_bytes": index.name_table_bytes,
+        "header_file_count": index.header_file_count,
+        "parsed_file_names": index.parsed_file_names,
+        "hash_validated": index.hash_validated,
+        "hash_mismatches": index.hash_mismatches,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -377,11 +414,15 @@ def resolve_voice_type(index: dict[str, Any], npc_form_id: int) -> str | None:
 
 
 def _classify_runtime(candidate: dict[str, Any]) -> tuple[str, list[str]]:
-    """Classify runtime risk using only evidence surfaced from Skyrim.esm.
+    """Classify runtime risk using only evidence surfaced from Skyrim.esm and BSA metadata.
 
     LOW is granted conservatively: an ordinary ``NPC_`` speaker using a generic
-    humanoid VoiceType, an early, always-available quest, zero CTDA, a single
-    child INFO, and (for reported candidates) an exact vanilla FUZ match.
+    humanoid VoiceType, a preferred/early quest-EDID prefix (a naming heuristic
+    only; runtime quest availability is NOT proven by it), zero CTDA, a single
+    child INFO, and a confirmed exact vanilla FUZ path match. LOW is only
+    reachable after exact-match metadata has been populated: a candidate whose
+    ``matched_full_fuz_path`` is empty can never classify LOW. A LOW-risk
+    candidate is a risk heuristic, not a runtime-proven control.
     Scene hints, non-NPC speakers, unresolved voices, unique/special VoiceTypes
     and non-early quests are escalated with explicit reasons and never labelled
     LOW without reproducible justification. Empty topic EDIDs are the vanilla
@@ -392,6 +433,9 @@ def _classify_runtime(candidate: dict[str, Any]) -> tuple[str, list[str]]:
     candidate when present.
     """
     reasons: list[str] = []
+
+    if not candidate.get("matched_full_fuz_path"):
+        reasons.append("no exact vanilla FUZ path match confirmed")
 
     if candidate["speaker_record_type"] != "NPC_":
         reasons.append(f"speaker is {candidate['speaker_record_type']}, not NPC_")
@@ -412,7 +456,10 @@ def _classify_runtime(candidate: dict[str, Any]) -> tuple[str, list[str]]:
         reasons.append(f"non-early quest prefix {candidate['quest_edid']}")
 
     if not reasons:
-        return ("LOW", ["ordinary NPC_, generic voice, early quest, single child, exact FUZ"])
+        return (
+            "LOW",
+            ["ordinary NPC_, generic voice, early quest-prefix heuristic, single child, exact vanilla FUZ match"],
+        )
     if len(reasons) == 1:
         return ("MEDIUM", reasons)
     return ("HIGH", reasons)
@@ -500,11 +547,10 @@ def collect_candidates(data: bytes) -> tuple[list[dict[str, Any]], dict[str, int
             "basename": basename,
             "expected_full_fuz_path": (f"Sound\\Voice\\{PLUGIN_FOR_VOICE}\\{voice_type}\\{basename}.fuz"),
             "matched_full_fuz_path": "",
-            "source_bsa": "",
-            "runtime_risk": "",
+            "matching_bsas": [],
+            "runtime_risk": None,
             "runtime_risk_reasons": [],
         }
-        candidate["runtime_risk"], candidate["runtime_risk_reasons"] = _classify_runtime(candidate)
         candidates.append(candidate)
 
     candidates.sort(
@@ -518,34 +564,67 @@ def collect_candidates(data: bytes) -> tuple[list[dict[str, Any]], dict[str, int
     return candidates, stats
 
 
-def _match_candidate(candidate: dict[str, Any], indexes: list[BsaVoiceIndex]) -> tuple[str, str] | None:
+def _match_candidate(candidate: dict[str, Any], indexes: list[BsaVoiceIndex]) -> tuple[str, list[str]] | None:
     """Exact full-path match: Sound\\Voice\\Skyrim.esm\\<VoiceType>\\<basename>.fuz.
 
-    Returns ``(normalized_matched_path, source_bsa)`` or ``None``. Only an
-    exact equality between the normalized expected path and the normalized
-    BSA path counts as a match.
+    Returns ``(normalized_matched_path, matching_bsas)`` or ``None``.
+    ``matching_bsas`` lists every provided archive containing the exact full
+    path, in enumeration order; it is an attribution of all archives holding
+    the asset, not a claim about which archive the game selects at load time.
+    Only an exact equality between the normalized expected path and the
+    normalized BSA path counts as a match.
     """
     folder = f"sound\\voice\\{PLUGIN_FOR_VOICE.lower()}\\{candidate['voice_type'].lower()}"
     filename = f"{candidate['basename'].lower()}.fuz"
-    for index in indexes:
-        if index.contains(folder, filename):
-            return f"{folder}\\{filename}", index.path.name
-    return None
+    matching_bsas = [index.path.name for index in indexes if index.contains(folder, filename)]
+    if not matching_bsas:
+        return None
+    return f"{folder}\\{filename}", matching_bsas
+
+
+def match_and_classify(candidates: list[dict[str, Any]], indexes: list[BsaVoiceIndex]) -> list[dict[str, Any]]:
+    """Exact-match structural candidates against the vanilla voice BSAs, then classify risk.
+
+    Pipeline order is contractual: exact BSA path matching first, exact-match
+    metadata population second, and only then ``runtime_risk`` classification.
+    Candidates without an exact match keep ``runtime_risk`` unset (``None``)
+    and are not returned; LOW is unreachable without a confirmed exact FUZ path.
+    """
+    matched: list[dict[str, Any]] = []
+    for candidate in candidates:
+        match = _match_candidate(candidate, indexes)
+        if match is None:
+            continue
+        candidate["matched_full_fuz_path"], candidate["matching_bsas"] = match
+        candidate["runtime_risk"], candidate["runtime_risk_reasons"] = _classify_runtime(candidate)
+        matched.append(candidate)
+    return matched
 
 
 def _render_markdown(
     stats: dict[str, int],
     bsa_meta: dict[str, dict[str, int]],
-    proven: list[dict[str, Any]],
+    matched: list[dict[str, Any]],
 ) -> str:
     """Render the evidence Markdown with full runtime identity per candidate."""
     lines = [
         "# Voice runtime control - vanilla candidates",
         "",
-        "Deterministic vanilla candidates reproducible with "
-        "`player.placeatme <ANAM FormID>` + `say <DIAL FormID>` (no Skyrim.esm "
-        "re-consultation needed; all identity fields below come from the "
-        "read-only finder run).",
+        "Structurally deterministic vanilla candidates prepared for manual runtime "
+        "validation with `player.placeatme <ANAM BaseFormID>` + `say <DIAL FormID>` "
+        "(all identity fields below come from the read-only finder run; no Skyrim.esm "
+        "re-consultation needed).",
+        "",
+        "Reading this evidence:",
+        "",
+        "- `ANAM` is the NPC **base FormID**. `player.placeatme` spawns a new actor whose "
+        "runtime reference FormID is created at runtime; never fabricate a reference FormID.",
+        "- `say` is a reference command: it must be executed on the spawned reference "
+        "selected in the console, not on the base FormID.",
+        "- The `quest_edid` prefix gate is only a preferred/early quest-prefix heuristic; "
+        "runtime quest availability was not proven.",
+        "- A LOW-risk candidate is a risk heuristic, not a runtime-proven control. No "
+        'candidate below is "working", "runtime-proven", or "verified in-game" yet.',
         "",
         f"Funnel: `{json.dumps(stats, sort_keys=True)}`",
         f"BSA metadata: `{json.dumps(bsa_meta, sort_keys=True)}`",
@@ -553,7 +632,7 @@ def _render_markdown(
         "| # | NPC (EDID) | Speaker | ANAM | VoiceType | Quest | Topic | DIAL | INFO | Resp | CTDA | Child INFO | Risk |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
-    for i, c in enumerate(proven, start=1):
+    for i, c in enumerate(matched, start=1):
         lines.append(
             f"| {i} | `{c['npc_edid']}` | {c['speaker_record_type']} | `{c['anam_form_hex']}` "
             f"| {c['voice_type']} | {c['quest_edid']} | `{c['topic_edid']}` "
@@ -563,16 +642,27 @@ def _render_markdown(
 
     lines += [
         "",
-        "## Reproduction commands",
+        "## Manual runtime reproduction procedure",
+        "",
+        "Per candidate: spawn the NPC with its base FormID, then select/click the "
+        "spawned reference in the console and verify it, and only then run `say` on "
+        "that selected reference. The runtime reference FormID is created at runtime "
+        "and is intentionally not listed here.",
         "",
         "```text",
     ]
-    for c in proven:
+    for c in matched:
+        anam = c["anam_form_hex"][2:]
         lines += [
             f"# {c['npc_edid']} ({c['voice_type']}) - {c['quest_edid']} / {c['topic_edid']} [{c['runtime_risk']}]",
-            f"player.placeatme {c['anam_form_hex'][2:]}",
+            f"player.placeatme {anam} 1",
+            "",
+            f"# In the console, select/click the newly spawned {c['npc_edid']}.",
+            f"# Verify its BaseID is {anam}.",
+            "# Only with that NPC reference selected:",
+            "",
             f"say {c['dial_form_hex'][2:]}",
-            f"# INFO {c['info_form_hex']} | FUZ {c['matched_full_fuz_path']} | BSA {c['source_bsa']}",
+            f"# INFO {c['info_form_hex']} | FUZ {c['matched_full_fuz_path']} | matching BSAs: {', '.join(c['matching_bsas'])}",
             "",
         ]
     lines.append("```")
@@ -598,46 +688,35 @@ def main() -> int:
         path = game_root / "Data" / name
         index = BsaVoiceIndex(path)
         indexes.append(index)
-        bsa_meta[name] = {
-            "size_bytes": path.stat().st_size,
-            "indexed_voice_paths": len(index.full_paths),
-            "name_table_bytes": index.name_table_bytes,
-        }
+        bsa_meta[name] = _bsa_meta_for(path, index)
         logger.info(
-            "%s: %d voice paths indexed (name tables %d bytes)",
+            "%s: %d voice paths indexed (hash-validated %d/%d, mismatches %d)",
             name,
             len(index.full_paths),
-            index.name_table_bytes,
+            index.hash_validated,
+            index.header_file_count,
+            index.hash_mismatches,
         )
 
-    proven: list[dict[str, Any]] = []
-    for candidate in candidates:
-        match = _match_candidate(candidate, indexes)
-        if match is None:
-            continue
-        matched_path, source_bsa = match
-        candidate["matched_full_fuz_path"] = matched_path
-        candidate["source_bsa"] = source_bsa
-        proven.append(candidate)
-
-    stats["exact_fuz_match"] = len(proven)
-    stats["runtime_low_risk"] = sum(1 for c in proven if c["runtime_risk"] == "LOW")
-    stats["reported_count"] = min(MAX_CANDIDATES_REPORTED, len(proven))
-    logger.info("%d candidates have an exact vanilla FUZ path match", len(proven))
+    matched = match_and_classify(candidates, indexes)
+    stats["exact_fuz_match"] = len(matched)
+    stats["runtime_low_risk"] = sum(1 for c in matched if c["runtime_risk"] == "LOW")
+    stats["reported_count"] = min(MAX_CANDIDATES_REPORTED, len(matched))
+    logger.info("%d candidates have an exact vanilla FUZ path match", len(matched))
 
     out_dir = REPO_ROOT / "docs" / "evidence" / "voice-in-game-proof"
     out_dir.mkdir(parents=True, exist_ok=True)
     report = {
         "stats": stats,
         "bsa_meta": bsa_meta,
-        "runtime_controls": proven[:MAX_CANDIDATES_REPORTED],
+        "runtime_controls": matched[:MAX_CANDIDATES_REPORTED],
     }
     (out_dir / "voice_runtime_controls.json").write_text(json.dumps(report, indent=2), encoding="utf-8", newline="\n")
 
-    markdown = _render_markdown(stats, bsa_meta, proven[:MAX_CANDIDATES_REPORTED])
+    markdown = _render_markdown(stats, bsa_meta, matched[:MAX_CANDIDATES_REPORTED])
     (out_dir / "voice_runtime_controls.md").write_text(markdown, encoding="utf-8", newline="\n")
     logger.info("Evidence written to %s", out_dir / "voice_runtime_controls.md")
-    return 0 if proven else 1
+    return 0 if matched else 1
 
 
 if __name__ == "__main__":

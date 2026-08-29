@@ -15,10 +15,13 @@ import pytest
 from scripts.voice_runtime_control_finder import (
     BsaVoiceIndex,
     BsaVoiceLoadError,
+    _bsa_meta_for,
     _classify_runtime,
     _match_candidate,
+    _render_markdown,
     _tes5_name_hash_low32,
     collect_candidates,
+    match_and_classify,
 )
 
 # ---------------------------------------------------------------------------
@@ -93,7 +96,7 @@ TALKING_ACTIVATOR_FID = 0x00000501
 
 
 def _valid_plugin(info_form: int = INFO_FID, speaker_form: int = NPC_FID) -> bytes:
-    """Fully valid single-child plugin whose only INFO is a LOW-risk candidate."""
+    """Fully valid single-child plugin whose only INFO is a structurally clean candidate."""
     return b"".join(
         [
             _vtyp(VTYP_FID, "MaleNord"),
@@ -212,7 +215,7 @@ def test_t3_basename_under_wrong_voicetype_folder_is_no_match(tmp_path: Path) ->
 
 
 def test_t4_correct_full_path_is_exact_match(tmp_path: Path) -> None:
-    """T4: the full correct path is an exact match with BSA attribution."""
+    """T4: the full correct path is an exact match with every-archive attribution."""
     candidate = _single_candidate()[0]
     folder = _voice_folder(candidate["voice_type"])
     data = build_bsa([(folder, [candidate["basename"].lower() + ".fuz"])])
@@ -221,10 +224,10 @@ def test_t4_correct_full_path_is_exact_match(tmp_path: Path) -> None:
 
     match = _match_candidate(candidate, [index])
     assert match is not None
-    matched_path, source_bsa = match
+    matched_path, matching_bsas = match
     assert matched_path == candidate["expected_full_fuz_path"].lower()
     assert matched_path.endswith(f"\\{candidate['basename'].lower()}.fuz")
-    assert source_bsa == "Skyrim - Voices_en0.bsa"
+    assert matching_bsas == ["Skyrim - Voices_en0.bsa"]
 
 
 # ---------------------------------------------------------------------------
@@ -314,15 +317,15 @@ def test_t6_talking_activator_speaker_rejected_and_never_low() -> None:
 
 
 def test_t7_low_candidate_carries_all_runtime_ids(tmp_path: Path) -> None:
-    """T7: a LOW candidate contains every runtime-mandatory identity field."""
-    candidate = _single_candidate()[0]
-    folder = _voice_folder(candidate["voice_type"])
-    data = build_bsa([(folder, [candidate["basename"].lower() + ".fuz"])])
+    """T7: a matched-and-classified LOW candidate contains every runtime-mandatory identity field."""
+    candidates = _single_candidate()
+    folder = _voice_folder(candidates[0]["voice_type"])
+    data = build_bsa([(folder, [candidates[0]["basename"].lower() + ".fuz"])])
 
     index = BsaVoiceIndex(_write_bsa(tmp_path, data))
-    match = _match_candidate(candidate, [index])
-    assert match is not None
-    candidate["matched_full_fuz_path"], candidate["source_bsa"] = match
+    matched = match_and_classify(candidates, [index])
+    assert len(matched) == 1
+    candidate = matched[0]
 
     assert candidate["runtime_risk"] == "LOW"
     assert candidate["runtime_risk_reasons"]
@@ -343,7 +346,7 @@ def test_t7_low_candidate_carries_all_runtime_ids(tmp_path: Path) -> None:
         "basename",
         "expected_full_fuz_path",
         "matched_full_fuz_path",
-        "source_bsa",
+        "matching_bsas",
         "runtime_risk",
         "runtime_risk_reasons",
     )
@@ -357,13 +360,168 @@ def test_t7_low_candidate_carries_all_runtime_ids(tmp_path: Path) -> None:
         "basename",
         "expected_full_fuz_path",
         "matched_full_fuz_path",
-        "source_bsa",
     ):
         assert candidate[field], f"empty runtime contract field: {field}"
+    assert candidate["matching_bsas"] == ["Skyrim - Voices_en0.bsa"]
     assert candidate["matched_full_fuz_path"] == candidate["expected_full_fuz_path"].lower()
     assert candidate["speaker_record_type"] == "NPC_"
     assert candidate["ctda_count"] == 0
     assert candidate["child_info_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# T8: structural LOW-lookalike without exact FUZ can never be LOW
+# ---------------------------------------------------------------------------
+
+
+def test_t8_structural_low_lookalike_without_exact_fuz_never_low(tmp_path: Path) -> None:
+    """T8: a perfect structural candidate without an exact FUZ match cannot become LOW."""
+    candidates, _ = collect_candidates(_valid_plugin())
+    assert len(candidates) == 1
+    candidate = candidates[0]
+
+    # Structural stage: no exact-match metadata and no risk classification.
+    assert candidate["matched_full_fuz_path"] == ""
+    assert candidate["matching_bsas"] == []
+    assert candidate["runtime_risk"] is None
+
+    # An archive holding the basename under a wrong VoiceType folder is no match.
+    data = build_bsa([(_voice_folder("FemaleNord"), [candidate["basename"].lower() + ".fuz"])])
+    index = BsaVoiceIndex(_write_bsa(tmp_path, data))
+    assert _match_candidate(candidate, [index]) is None
+    assert match_and_classify(candidates, [index]) == []
+    assert candidate["runtime_risk"] is None
+
+    # The classifier itself refuses LOW without exact-match metadata.
+    risk, reasons = _classify_runtime(candidate)
+    assert risk != "LOW"
+    assert any("FUZ" in reason for reason in reasons)
+
+
+# ---------------------------------------------------------------------------
+# T9: risk classification only after exact-match metadata
+# ---------------------------------------------------------------------------
+
+
+def test_t9_risk_classification_only_after_exact_match_metadata(tmp_path: Path) -> None:
+    """T9: runtime risk is assigned only after exact-match metadata is populated."""
+    candidate = _single_candidate()[0]
+
+    # Structural stage leaves the candidate unclassified.
+    assert candidate["runtime_risk"] is None
+    assert candidate["matched_full_fuz_path"] == ""
+
+    folder = _voice_folder(candidate["voice_type"])
+    data = build_bsa([(folder, [candidate["basename"].lower() + ".fuz"])])
+    index = BsaVoiceIndex(_write_bsa(tmp_path, data))
+
+    matched = match_and_classify([candidate], [index])
+    assert matched == [candidate]
+    # Metadata is populated before classification: a LOW verdict implies both.
+    assert candidate["matched_full_fuz_path"] == candidate["expected_full_fuz_path"].lower()
+    assert candidate["matching_bsas"] == ["Skyrim - Voices_en0.bsa"]
+    assert candidate["runtime_risk"] == "LOW"
+
+
+# ---------------------------------------------------------------------------
+# T10: same exact path in en0 and es0 preserves both archives
+# ---------------------------------------------------------------------------
+
+
+def test_t10_exact_path_in_both_archives_preserves_both(tmp_path: Path) -> None:
+    """T10: a path present in en0 and es0 is attributed to both archives."""
+    candidate = _single_candidate()[0]
+    folder = _voice_folder(candidate["voice_type"])
+    data = build_bsa([(folder, [candidate["basename"].lower() + ".fuz"])])
+
+    en0 = tmp_path / "Skyrim - Voices_en0.bsa"
+    es0 = tmp_path / "Skyrim - Voices_es0.bsa"
+    en0.write_bytes(data)
+    es0.write_bytes(data)
+    indexes = [BsaVoiceIndex(en0), BsaVoiceIndex(es0)]
+
+    matched = match_and_classify([candidate], indexes)
+    assert len(matched) == 1
+    assert matched[0]["matching_bsas"] == ["Skyrim - Voices_en0.bsa", "Skyrim - Voices_es0.bsa"]
+
+
+# ---------------------------------------------------------------------------
+# T11: rendered procedure selects/verifies the spawned reference before `say`
+# ---------------------------------------------------------------------------
+
+
+def test_t11_rendered_procedure_selects_spawned_reference_before_say(tmp_path: Path) -> None:
+    """T11: the manual procedure requires spawned-reference selection before `say`."""
+    candidate = _single_candidate()[0]
+    folder = _voice_folder(candidate["voice_type"])
+    data = build_bsa([(folder, [candidate["basename"].lower() + ".fuz"])])
+    path = _write_bsa(tmp_path, data)
+    index = BsaVoiceIndex(path)
+    matched = match_and_classify([candidate], [index])
+
+    stats = {"infos_total": 1, "exact_fuz_match": 1, "reported_count": 1}
+    markdown = _render_markdown(stats, {"Skyrim - Voices_en0.bsa": _bsa_meta_for(path, index)}, matched)
+
+    anam = matched[0]["anam_form_hex"][2:]
+    dial = matched[0]["dial_form_hex"][2:]
+    placeatme_line = f"player.placeatme {anam} 1"
+    select_line = f"# In the console, select/click the newly spawned {matched[0]['npc_edid']}."
+    verify_line = f"# Verify its BaseID is {anam}."
+    only_selected_line = "# Only with that NPC reference selected:"
+    say_line = f"say {dial}"
+
+    assert placeatme_line in markdown
+    assert select_line in markdown
+    assert verify_line in markdown
+    assert only_selected_line in markdown
+    assert say_line in markdown
+    assert (
+        0
+        < markdown.index(placeatme_line)
+        < markdown.index(select_line)
+        < markdown.index(verify_line)
+        < markdown.index(only_selected_line)
+        < markdown.index(say_line)
+    )
+    # The runtime reference FormID is created at runtime and never fabricated.
+    assert "prid" not in markdown.lower()
+    assert "runtime reference" in markdown
+    assert "created at runtime" in markdown
+    # No overclaim: LOW is a heuristic, nothing is runtime-proven yet.
+    assert "not a runtime-proven control" in markdown
+    assert "quest-prefix heuristic" in markdown
+
+
+# ---------------------------------------------------------------------------
+# T12: persisted BSA validation counts prove the hash audit
+# ---------------------------------------------------------------------------
+
+
+def test_t12_bsa_validation_counts_prove_hash_audit(tmp_path: Path) -> None:
+    """T12: header count == parsed count == hash-validated count, zero mismatches."""
+    candidate = _single_candidate()[0]
+    folder = _voice_folder(candidate["voice_type"])
+    data = build_bsa([(folder, [candidate["basename"].lower() + ".fuz"])])
+
+    path = _write_bsa(tmp_path, data)
+    index = BsaVoiceIndex(path)
+
+    assert index.header_file_count == 1
+    assert index.header_file_count == index.parsed_file_names == index.hash_validated
+    assert index.hash_mismatches == 0
+
+    meta = _bsa_meta_for(path, index)
+    assert meta["header_file_count"] == meta["parsed_file_names"] == meta["hash_validated"]
+    assert meta["hash_mismatches"] == 0
+    assert meta["indexed_voice_paths"] == 1
+    assert meta["size_bytes"] == len(data)
+
+    matched = match_and_classify([candidate], [index])
+    assert matched == [candidate]
+    stats = {"infos_total": 1, "exact_fuz_match": 1, "reported_count": 1}
+    markdown = _render_markdown(stats, {"Skyrim - Voices_en0.bsa": meta}, matched)
+    assert "hash_validated" in markdown
+    assert "hash_mismatches" in markdown
 
 
 def test_counters_follow_funnel_order(tmp_path: Path) -> None:
