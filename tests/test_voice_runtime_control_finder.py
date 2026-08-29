@@ -250,6 +250,10 @@ def _flip_record_hash(data: bytearray) -> bytes:
         pytest.param(lambda data: b"XSA\x00" + data[4:], id="bad-magic"),
         pytest.param(lambda data: data[:4] + struct.pack("<I", 104) + data[8:], id="bad-version"),
         pytest.param(
+            lambda data: data[:8] + struct.pack("<i", 999) + data[12:],
+            id="unsupported-folder-records-offset",
+        ),
+        pytest.param(
             lambda data: data[:12] + struct.pack("<I", 0x0) + data[16:],
             id="folder-file-names-flags-cleared",
         ),
@@ -356,12 +360,16 @@ def test_t7_low_candidate_carries_all_runtime_ids(tmp_path: Path) -> None:
         "npc_edid",
         "voice_type",
         "quest_edid",
-        "topic_edid",
         "basename",
         "expected_full_fuz_path",
         "matched_full_fuz_path",
     ):
         assert candidate[field], f"empty runtime contract field: {field}"
+    # topic_edid MUST exist as a field and be a string, but MAY be "": vanilla
+    # single-child DIALs commonly carry no EditorID (e.g. the Nelacar DA01
+    # control has topic_edid == "").
+    assert "topic_edid" in candidate
+    assert isinstance(candidate["topic_edid"], str)
     assert candidate["matching_bsas"] == ["Skyrim - Voices_en0.bsa"]
     assert candidate["matched_full_fuz_path"] == candidate["expected_full_fuz_path"].lower()
     assert candidate["speaker_record_type"] == "NPC_"
@@ -522,6 +530,40 @@ def test_t12_bsa_validation_counts_prove_hash_audit(tmp_path: Path) -> None:
     markdown = _render_markdown(stats, {"Skyrim - Voices_en0.bsa": meta}, matched)
     assert "hash_validated" in markdown
     assert "hash_mismatches" in markdown
+
+
+# ---------------------------------------------------------------------------
+# T13: empty topic_edid is contract-valid and must not block LOW
+# ---------------------------------------------------------------------------
+
+
+def test_t13_empty_topic_edid_with_all_gates_and_exact_fuz_may_classify_low(tmp_path: Path) -> None:
+    """T13: candidate with empty topic_edid + all structural gates + exact FUZ -> LOW."""
+    plugin = b"".join(
+        [
+            _vtyp(VTYP_FID, "MaleNord"),
+            _npc(NPC_FID, "TestNord", VTYP_FID),
+            _qust(QUEST_FID, QUEST_EDID),
+            _dial(DIAL_FID, "", QUEST_FID),
+            _grup(DIAL_FID, 7, _info(INFO_FID, NPC_FID, QUEST_FID)),
+        ]
+    )
+
+    candidates, _ = collect_candidates(plugin)
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["topic_edid"] == ""
+    assert isinstance(candidate["topic_edid"], str)
+
+    folder = _voice_folder(candidate["voice_type"])
+    data = build_bsa([(folder, [candidate["basename"].lower() + ".fuz"])])
+    index = BsaVoiceIndex(_write_bsa(tmp_path, data))
+
+    matched = match_and_classify(candidates, [index])
+
+    assert len(matched) == 1
+    assert matched[0]["matched_full_fuz_path"] == candidate["expected_full_fuz_path"].lower()
+    assert matched[0]["runtime_risk"] == "LOW"
 
 
 def test_counters_follow_funnel_order(tmp_path: Path) -> None:

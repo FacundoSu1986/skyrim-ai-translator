@@ -136,7 +136,10 @@ class BsaVoiceIndex:
 
     Layout contract (validated against both installed vanilla voice archives):
 
-    - 36-byte header (magic ``BSA\\0``, version 105, totals and counts).
+    - 36-byte header (magic ``BSA\\0``, version 105, totals and counts). The
+      declared folder-records offset is validated to equal 36: vanilla TES5
+      v105 archives always place folder records immediately after the header,
+      and any other value is treated as unsupported rather than honored.
     - Folder records: 24 bytes each (name hash u64, file count u32, reserved
       u32, data offset u64). The reserved dword is ignored: the installed
       archives carry a nonzero value in exactly one record without affecting
@@ -173,11 +176,16 @@ class BsaVoiceIndex:
             label = self.path.name
 
             header = _read_exact(handle, BSA_HEADER_SIZE, f"{label}: header")
-            magic, version, _folder_records_offset = struct.unpack_from("<4sIi", header, 0)
+            magic, version, folder_records_offset = struct.unpack_from("<4sIi", header, 0)
             if magic != BSA_MAGIC:
                 raise BsaVoiceLoadError(f"{label}: not a BSA (magic={magic!r})")
             if version != BSA_TES5_VERSION:
                 raise BsaVoiceLoadError(f"{label}: unsupported BSA version {version} (expected {BSA_TES5_VERSION})")
+            if folder_records_offset != BSA_HEADER_SIZE:
+                raise BsaVoiceLoadError(
+                    f"{label}: unsupported folder-records offset {folder_records_offset} "
+                    f"(vanilla TES5 v105 archives pin it to {BSA_HEADER_SIZE})"
+                )
 
             (
                 archive_flags,
