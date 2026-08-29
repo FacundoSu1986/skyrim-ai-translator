@@ -1,0 +1,810 @@
+{
+  "stats": {
+    "infos_total": 31465,
+    "explicit_anam": 223,
+    "npc_speaker": 223,
+    "voice_resolved": 223,
+    "single_response": 152,
+    "zero_ctda": 107,
+    "single_child_dial": 90,
+    "quest_resolved": 90,
+    "exact_fuz_match": 90,
+    "runtime_low_risk": 1,
+    "reported_count": 25
+  },
+  "bsa_meta": {
+    "Skyrim - Voices_en0.bsa": {
+      "size_bytes": 1807969854,
+      "indexed_voice_paths": 75408,
+      "name_table_bytes": 2709902,
+      "header_file_count": 75408,
+      "parsed_file_names": 75408,
+      "hash_validated": 75408,
+      "hash_mismatches": 0
+    },
+    "Skyrim - Voices_es0.bsa": {
+      "size_bytes": 1879699949,
+      "indexed_voice_paths": 74716,
+      "name_table_bytes": 2685442,
+      "header_file_count": 74716,
+      "parsed_file_names": 74716,
+      "hash_validated": 74716,
+      "hash_mismatches": 0
+    }
+  },
+  "runtime_controls": [
+    {
+      "dial_form_id": 666660,
+      "dial_form_hex": "0x000A2C24",
+      "info_form_id": 666687,
+      "info_form_hex": "0x000A2C3F",
+      "anam_form_id": 166633,
+      "anam_form_hex": "0x00028AE9",
+      "npc_edid": "DA01AzuraVoice",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleUniqueAzura",
+      "quest_form_id": 166614,
+      "quest_form_hex": "0x00028AD6",
+      "quest_edid": "DA01",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "DA01__000A2C3F_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleUniqueAzura\\DA01__000A2C3F_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femaleuniqueazura\\da01__000a2c3f_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "MEDIUM",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleUniqueAzura"
+      ]
+    },
+    {
+      "dial_form_id": 666659,
+      "dial_form_hex": "0x000A2C23",
+      "info_form_id": 666693,
+      "info_form_hex": "0x000A2C45",
+      "anam_form_id": 124885,
+      "anam_form_hex": "0x0001E7D5",
+      "npc_edid": "Nelacar",
+      "speaker_record_type": "NPC_",
+      "voice_type": "MaleElfHaughty",
+      "quest_form_id": 166614,
+      "quest_form_hex": "0x00028AD6",
+      "quest_edid": "DA01",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "DA01__000A2C45_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\MaleElfHaughty\\DA01__000A2C45_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\maleelfhaughty\\da01__000a2c45_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "LOW",
+      "runtime_risk_reasons": [
+        "ordinary NPC_, generic voice, early quest-prefix heuristic, single child, exact vanilla FUZ match"
+      ]
+    },
+    {
+      "dial_form_id": 524538,
+      "dial_form_hex": "0x000800FA",
+      "info_form_id": 524546,
+      "info_form_hex": "0x00080102",
+      "anam_form_id": 146067,
+      "anam_form_hex": "0x00023A93",
+      "npc_edid": "EncDragonPriest",
+      "speaker_record_type": "NPC_",
+      "voice_type": "CrDragonPriestVoice",
+      "quest_form_id": 127575,
+      "quest_form_hex": "0x0001F257",
+      "quest_edid": "MG07",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MG07__00080102_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080102_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080102_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType CrDragonPriestVoice",
+        "non-early quest prefix MG07"
+      ]
+    },
+    {
+      "dial_form_id": 524542,
+      "dial_form_hex": "0x000800FE",
+      "info_form_id": 524547,
+      "info_form_hex": "0x00080103",
+      "anam_form_id": 146067,
+      "anam_form_hex": "0x00023A93",
+      "npc_edid": "EncDragonPriest",
+      "speaker_record_type": "NPC_",
+      "voice_type": "CrDragonPriestVoice",
+      "quest_form_id": 127575,
+      "quest_form_hex": "0x0001F257",
+      "quest_edid": "MG07",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MG07__00080103_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080103_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080103_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType CrDragonPriestVoice",
+        "non-early quest prefix MG07"
+      ]
+    },
+    {
+      "dial_form_id": 524537,
+      "dial_form_hex": "0x000800F9",
+      "info_form_id": 524548,
+      "info_form_hex": "0x00080104",
+      "anam_form_id": 146067,
+      "anam_form_hex": "0x00023A93",
+      "npc_edid": "EncDragonPriest",
+      "speaker_record_type": "NPC_",
+      "voice_type": "CrDragonPriestVoice",
+      "quest_form_id": 127575,
+      "quest_form_hex": "0x0001F257",
+      "quest_edid": "MG07",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MG07__00080104_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080104_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080104_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType CrDragonPriestVoice",
+        "non-early quest prefix MG07"
+      ]
+    },
+    {
+      "dial_form_id": 524540,
+      "dial_form_hex": "0x000800FC",
+      "info_form_id": 524549,
+      "info_form_hex": "0x00080105",
+      "anam_form_id": 146067,
+      "anam_form_hex": "0x00023A93",
+      "npc_edid": "EncDragonPriest",
+      "speaker_record_type": "NPC_",
+      "voice_type": "CrDragonPriestVoice",
+      "quest_form_id": 127575,
+      "quest_form_hex": "0x0001F257",
+      "quest_edid": "MG07",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MG07__00080105_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080105_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080105_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType CrDragonPriestVoice",
+        "non-early quest prefix MG07"
+      ]
+    },
+    {
+      "dial_form_id": 524541,
+      "dial_form_hex": "0x000800FD",
+      "info_form_id": 524550,
+      "info_form_hex": "0x00080106",
+      "anam_form_id": 146067,
+      "anam_form_hex": "0x00023A93",
+      "npc_edid": "EncDragonPriest",
+      "speaker_record_type": "NPC_",
+      "voice_type": "CrDragonPriestVoice",
+      "quest_form_id": 127575,
+      "quest_form_hex": "0x0001F257",
+      "quest_edid": "MG07",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MG07__00080106_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080106_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080106_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType CrDragonPriestVoice",
+        "non-early quest prefix MG07"
+      ]
+    },
+    {
+      "dial_form_id": 524536,
+      "dial_form_hex": "0x000800F8",
+      "info_form_id": 524551,
+      "info_form_hex": "0x00080107",
+      "anam_form_id": 146067,
+      "anam_form_hex": "0x00023A93",
+      "npc_edid": "EncDragonPriest",
+      "speaker_record_type": "NPC_",
+      "voice_type": "CrDragonPriestVoice",
+      "quest_form_id": 127575,
+      "quest_form_hex": "0x0001F257",
+      "quest_edid": "MG07",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MG07__00080107_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080107_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080107_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType CrDragonPriestVoice",
+        "non-early quest prefix MG07"
+      ]
+    },
+    {
+      "dial_form_id": 524534,
+      "dial_form_hex": "0x000800F6",
+      "info_form_id": 524553,
+      "info_form_hex": "0x00080109",
+      "anam_form_id": 146067,
+      "anam_form_hex": "0x00023A93",
+      "npc_edid": "EncDragonPriest",
+      "speaker_record_type": "NPC_",
+      "voice_type": "CrDragonPriestVoice",
+      "quest_form_id": 127575,
+      "quest_form_hex": "0x0001F257",
+      "quest_edid": "MG07",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MG07__00080109_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__00080109_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__00080109_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType CrDragonPriestVoice",
+        "non-early quest prefix MG07"
+      ]
+    },
+    {
+      "dial_form_id": 524539,
+      "dial_form_hex": "0x000800FB",
+      "info_form_id": 524554,
+      "info_form_hex": "0x0008010A",
+      "anam_form_id": 146067,
+      "anam_form_hex": "0x00023A93",
+      "npc_edid": "EncDragonPriest",
+      "speaker_record_type": "NPC_",
+      "voice_type": "CrDragonPriestVoice",
+      "quest_form_id": 127575,
+      "quest_form_hex": "0x0001F257",
+      "quest_edid": "MG07",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MG07__0008010A_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__0008010A_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__0008010a_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType CrDragonPriestVoice",
+        "non-early quest prefix MG07"
+      ]
+    },
+    {
+      "dial_form_id": 524543,
+      "dial_form_hex": "0x000800FF",
+      "info_form_id": 524555,
+      "info_form_hex": "0x0008010B",
+      "anam_form_id": 146067,
+      "anam_form_hex": "0x00023A93",
+      "npc_edid": "EncDragonPriest",
+      "speaker_record_type": "NPC_",
+      "voice_type": "CrDragonPriestVoice",
+      "quest_form_id": 127575,
+      "quest_form_hex": "0x0001F257",
+      "quest_edid": "MG07",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MG07__0008010B_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrDragonPriestVoice\\MG07__0008010B_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\crdragonpriestvoice\\mg07__0008010b_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType CrDragonPriestVoice",
+        "non-early quest prefix MG07"
+      ]
+    },
+    {
+      "dial_form_id": 971606,
+      "dial_form_hex": "0x000ED356",
+      "info_form_id": 971609,
+      "info_form_hex": "0x000ED359",
+      "anam_form_id": 321980,
+      "anam_form_hex": "0x0004E9BC",
+      "npc_edid": "MQ304Alduin",
+      "speaker_record_type": "NPC_",
+      "voice_type": "CrUniqueAlduin",
+      "quest_form_id": 290546,
+      "quest_form_hex": "0x00046EF2",
+      "quest_edid": "MQ305",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MQ305__000ED359_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\CrUniqueAlduin\\MQ305__000ED359_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\cruniquealduin\\mq305__000ed359_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType CrUniqueAlduin",
+        "non-early quest prefix MQ305"
+      ]
+    },
+    {
+      "dial_form_id": 222798,
+      "dial_form_hex": "0x0003664E",
+      "info_form_id": 222799,
+      "info_form_hex": "0x0003664F",
+      "anam_form_id": 160933,
+      "anam_form_hex": "0x000274A5",
+      "npc_edid": "MS14Helgi",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleChild",
+      "quest_form_id": 155454,
+      "quest_form_hex": "0x00025F3E",
+      "quest_edid": "MS14",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MS14__0003664F_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleChild\\MS14__0003664F_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalechild\\ms14__0003664f_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleChild",
+        "non-early quest prefix MS14"
+      ]
+    },
+    {
+      "dial_form_id": 645571,
+      "dial_form_hex": "0x0009D9C3",
+      "info_form_id": 645591,
+      "info_form_hex": "0x0009D9D7",
+      "anam_form_id": 158802,
+      "anam_form_hex": "0x00026C52",
+      "npc_edid": "MS06Potema",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleCommander",
+      "quest_form_id": 604167,
+      "quest_form_hex": "0x00093807",
+      "quest_edid": "MS06Start",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MS06Start__0009D9D7_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCommander\\MS06Start__0009D9D7_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecommander\\ms06start__0009d9d7_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "MEDIUM",
+      "runtime_risk_reasons": [
+        "non-early quest prefix MS06Start"
+      ]
+    },
+    {
+      "dial_form_id": 645575,
+      "dial_form_hex": "0x0009D9C7",
+      "info_form_id": 645593,
+      "info_form_hex": "0x0009D9D9",
+      "anam_form_id": 158802,
+      "anam_form_hex": "0x00026C52",
+      "npc_edid": "MS06Potema",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleCommander",
+      "quest_form_id": 604167,
+      "quest_form_hex": "0x00093807",
+      "quest_edid": "MS06Start",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MS06Start__0009D9D9_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCommander\\MS06Start__0009D9D9_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecommander\\ms06start__0009d9d9_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "MEDIUM",
+      "runtime_risk_reasons": [
+        "non-early quest prefix MS06Start"
+      ]
+    },
+    {
+      "dial_form_id": 645584,
+      "dial_form_hex": "0x0009D9D0",
+      "info_form_id": 645604,
+      "info_form_hex": "0x0009D9E4",
+      "anam_form_id": 158802,
+      "anam_form_hex": "0x00026C52",
+      "npc_edid": "MS06Potema",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleCommander",
+      "quest_form_id": 604167,
+      "quest_form_hex": "0x00093807",
+      "quest_edid": "MS06Start",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "MS06Start__0009D9E4_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCommander\\MS06Start__0009D9E4_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecommander\\ms06start__0009d9e4_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "MEDIUM",
+      "runtime_risk_reasons": [
+        "non-early quest prefix MS06Start"
+      ]
+    },
+    {
+      "dial_form_id": 605115,
+      "dial_form_hex": "0x00093BBB",
+      "info_form_id": 605120,
+      "info_form_hex": "0x00093BC0",
+      "anam_form_id": 144186,
+      "anam_form_hex": "0x0002333A",
+      "npc_edid": "dunAnsilvundLuahAlSkaven",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleCondescending",
+      "quest_form_id": 251681,
+      "quest_form_hex": "0x0003D721",
+      "quest_edid": "dunAnsilvundQST",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "dunAnsilvundQST__00093BC0_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCondescending\\dunAnsilvundQST__00093BC0_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecondescending\\dunansilvundqst__00093bc0_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleCondescending",
+        "non-early quest prefix dunAnsilvundQST"
+      ]
+    },
+    {
+      "dial_form_id": 605117,
+      "dial_form_hex": "0x00093BBD",
+      "info_form_id": 605128,
+      "info_form_hex": "0x00093BC8",
+      "anam_form_id": 144186,
+      "anam_form_hex": "0x0002333A",
+      "npc_edid": "dunAnsilvundLuahAlSkaven",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleCondescending",
+      "quest_form_id": 251681,
+      "quest_form_hex": "0x0003D721",
+      "quest_edid": "dunAnsilvundQST",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "dunAnsilvundQST__00093BC8_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCondescending\\dunAnsilvundQST__00093BC8_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecondescending\\dunansilvundqst__00093bc8_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleCondescending",
+        "non-early quest prefix dunAnsilvundQST"
+      ]
+    },
+    {
+      "dial_form_id": 605116,
+      "dial_form_hex": "0x00093BBC",
+      "info_form_id": 605131,
+      "info_form_hex": "0x00093BCB",
+      "anam_form_id": 144186,
+      "anam_form_hex": "0x0002333A",
+      "npc_edid": "dunAnsilvundLuahAlSkaven",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleCondescending",
+      "quest_form_id": 251681,
+      "quest_form_hex": "0x0003D721",
+      "quest_edid": "dunAnsilvundQST",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "dunAnsilvundQST__00093BCB_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCondescending\\dunAnsilvundQST__00093BCB_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecondescending\\dunansilvundqst__00093bcb_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleCondescending",
+        "non-early quest prefix dunAnsilvundQST"
+      ]
+    },
+    {
+      "dial_form_id": 746601,
+      "dial_form_hex": "0x000B6469",
+      "info_form_id": 746602,
+      "info_form_hex": "0x000B646A",
+      "anam_form_id": 144186,
+      "anam_form_hex": "0x0002333A",
+      "npc_edid": "dunAnsilvundLuahAlSkaven",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleCondescending",
+      "quest_form_id": 251681,
+      "quest_form_hex": "0x0003D721",
+      "quest_edid": "dunAnsilvundQST",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "dunAnsilvundQST__000B646A_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleCondescending\\dunAnsilvundQST__000B646A_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalecondescending\\dunansilvundqst__000b646a_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleCondescending",
+        "non-early quest prefix dunAnsilvundQST"
+      ]
+    },
+    {
+      "dial_form_id": 514348,
+      "dial_form_hex": "0x0007D92C",
+      "info_form_id": 514357,
+      "info_form_hex": "0x0007D935",
+      "anam_form_id": 104719,
+      "anam_form_hex": "0x0001990F",
+      "npc_edid": "Eola",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleSultry",
+      "quest_form_id": 514384,
+      "quest_form_hex": "0x0007D950",
+      "quest_edid": "DA11HallScene",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "DA11HallScene__0007D935_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleSultry\\DA11HallScene__0007D935_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalesultry\\da11hallscene__0007d935_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleSultry",
+        "scene-associated name (quest/topic)",
+        "non-early quest prefix DA11HallScene"
+      ]
+    },
+    {
+      "dial_form_id": 514350,
+      "dial_form_hex": "0x0007D92E",
+      "info_form_id": 514367,
+      "info_form_hex": "0x0007D93F",
+      "anam_form_id": 104719,
+      "anam_form_hex": "0x0001990F",
+      "npc_edid": "Eola",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleSultry",
+      "quest_form_id": 514384,
+      "quest_form_hex": "0x0007D950",
+      "quest_edid": "DA11HallScene",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "DA11HallScene__0007D93F_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleSultry\\DA11HallScene__0007D93F_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalesultry\\da11hallscene__0007d93f_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleSultry",
+        "scene-associated name (quest/topic)",
+        "non-early quest prefix DA11HallScene"
+      ]
+    },
+    {
+      "dial_form_id": 630002,
+      "dial_form_hex": "0x00099CF2",
+      "info_form_id": 630008,
+      "info_form_hex": "0x00099CF8",
+      "anam_form_id": 104719,
+      "anam_form_hex": "0x0001990F",
+      "npc_edid": "Eola",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleSultry",
+      "quest_form_id": 514384,
+      "quest_form_hex": "0x0007D950",
+      "quest_edid": "DA11HallScene",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "DA11HallScene__00099CF8_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleSultry\\DA11HallScene__00099CF8_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femalesultry\\da11hallscene__00099cf8_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleSultry",
+        "scene-associated name (quest/topic)",
+        "non-early quest prefix DA11HallScene"
+      ]
+    },
+    {
+      "dial_form_id": 317580,
+      "dial_form_hex": "0x0004D88C",
+      "info_form_id": 317640,
+      "info_form_hex": "0x0004D8C8",
+      "anam_form_id": 317723,
+      "anam_form_hex": "0x0004D91B",
+      "npc_edid": "DA02Boethiah",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleUniqueBoethiah",
+      "quest_form_id": 317654,
+      "quest_form_hex": "0x0004D8D6",
+      "quest_edid": "DA02",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "DA02__0004D8C8_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleUniqueBoethiah\\DA02__0004D8C8_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femaleuniqueboethiah\\da02__0004d8c8_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleUniqueBoethiah",
+        "non-early quest prefix DA02"
+      ]
+    },
+    {
+      "dial_form_id": 528760,
+      "dial_form_hex": "0x00081178",
+      "info_form_id": 528761,
+      "info_form_hex": "0x00081179",
+      "anam_form_id": 317723,
+      "anam_form_hex": "0x0004D91B",
+      "npc_edid": "DA02Boethiah",
+      "speaker_record_type": "NPC_",
+      "voice_type": "FemaleUniqueBoethiah",
+      "quest_form_id": 317654,
+      "quest_form_hex": "0x0004D8D6",
+      "quest_edid": "DA02",
+      "topic_edid": "",
+      "dial_topic_type": null,
+      "child_info_count": 1,
+      "response_number": 1,
+      "ctda_count": 0,
+      "basename": "DA02__00081179_1",
+      "expected_full_fuz_path": "Sound\\Voice\\Skyrim.esm\\FemaleUniqueBoethiah\\DA02__00081179_1.fuz",
+      "matched_full_fuz_path": "sound\\voice\\skyrim.esm\\femaleuniqueboethiah\\da02__00081179_1.fuz",
+      "matching_bsas": [
+        "Skyrim - Voices_en0.bsa",
+        "Skyrim - Voices_es0.bsa"
+      ],
+      "runtime_risk": "HIGH",
+      "runtime_risk_reasons": [
+        "non-generic/special VoiceType FemaleUniqueBoethiah",
+        "non-early quest prefix DA02"
+      ]
+    }
+  ]
+}
