@@ -1,6 +1,8 @@
 import hashlib
 import struct
+import zlib
 
+from src import esp_parser as esp_parser_module
 from src.esp_parser import MasterResolver, _resolve_record_key, parse_esp_file
 from src.free_translator import _protect_glossary, _resolve_lang_code, _restore_glossary, translate_free_text_sync
 from src.voice_mapper import resolve_voice_for_entry
@@ -1449,3 +1451,120 @@ def test_esp_parser_info_without_anam_yields_none_voice_type(tmp_path):
     entries = parse_esp_file(esp_path)
     dialog = next(e for e in entries if e.is_dialog)
     assert dialog.voice_type is None
+
+
+def _make_compressed_record(
+    rec_type: bytes, form_id: int, inner_body: bytes, declared_size: int | None = None
+) -> bytes:
+    """Builds a compressed (FLAG_COMPRESSED) record: u32 declared size + zlib stream."""
+    declared = len(inner_body) if declared_size is None else declared_size
+    body = struct.pack("<I", declared) + zlib.compress(inner_body)
+    return make_record(rec_type, form_id, body, flags=esp_parser_module.FLAG_COMPRESSED)
+
+
+def _parse_single_record(tmp_path, record: bytes):
+    """Writes TES4 + one top-level record and returns the extracted entries."""
+    esp_path = tmp_path / "Compressed.esp"
+    esp_path.write_bytes(make_tes4_header() + record)
+    return parse_esp_file(esp_path)
+
+
+def test_esp_parser_valid_compressed_record_is_parsed(tmp_path):
+    """Positive contract: a well-formed compressed BOOK below the bound keeps its text.
+
+    RED-state note: this guard must pass BOTH before and after the fix; it
+    protects the valid compressed path from regressions."""
+    inner = make_subrecord(b"FULL", b"A Valid Compressed Tale\x00")
+    book = _make_compressed_record(b"BOOK", 0x00000001, inner)
+
+    entries = _parse_single_record(tmp_path, book)
+
+    texts = [e.text for e in entries if e.record_type == "BOOK"]
+    assert "A Valid Compressed Tale" in texts
+
+
+def test_esp_parser_compressed_record_declared_size_over_cap_is_skipped(tmp_path):
+    """B9: a record whose declared decompressed size exceeds the parser bound must be
+    skipped instead of trusted; the declared size is attacker-controlled metadata."""
+    # Fallback mirrors the intended 64 MiB bound so this test demonstrates the
+    # missing protection behaviorally when the constant does not exist yet (RED).
+    cap = getattr(esp_parser_module, "MAX_DECOMPRESSED_RECORD_BYTES", 64 * 1024 * 1024)
+    inner = make_subrecord(b"FULL", b"DeclaredOversize\x00")
+    declared = cap + 1
+    book = _make_compressed_record(b"BOOK", 0x00000002, inner, declared_size=declared)
+
+    entries = _parse_single_record(tmp_path, book)
+
+    assert [e for e in entries if e.record_type == "BOOK"] == []
+
+
+def _pad_subrecords(total_len: int) -> bytes:
+    """Builds exactly total_len bytes of inert XXXX subrecords (a 1..5 byte tail is
+    emitted raw; _read_subrecords ignores it as an incomplete header)."""
+    parts = []
+    remaining = total_len
+    while remaining > 6:
+        payload_len = min(65535, remaining - 6)
+        parts.append(make_subrecord(b"XXXX", b"\x00" * payload_len))
+        remaining -= payload_len + 6
+    if remaining:
+        parts.append(b"\x00" * remaining)
+    return b"".join(parts)
+
+
+def test_esp_parser_compressed_record_inflating_beyond_cap_is_skipped(tmp_path):
+    """B9 reproducer: a zip-bomb record whose ACTUAL inflation exceeds the bound must be
+    skipped even when the declared header matches. The current zlib.decompress(..., bufsize=N)
+    usage does not bound output, so this is RED before the fix."""
+    cap = getattr(esp_parser_module, "MAX_DECOMPRESSED_RECORD_BYTES", 64 * 1024 * 1024)
+    text = make_subrecord(b"FULL", b"BombTextShouldNotSurvive\x00")
+    inner = text + _pad_subrecords((cap + 1) - len(text))
+    assert len(inner) == cap + 1
+
+    book = _make_compressed_record(b"BOOK", 0x00000003, inner)
+    compressed_on_disk = len(zlib.compress(inner))
+    assert compressed_on_disk < cap  # the bomb is small on disk
+
+    entries = _parse_single_record(tmp_path, book)
+
+    assert [e for e in entries if e.record_type == "BOOK"] == []
+
+
+def test_esp_parser_compressed_record_size_mismatch_is_skipped(tmp_path):
+    """B9: declared size lying about the real inflation is a corrupt record; it must be
+    skipped (fail-closed), never parsed into extracted strings."""
+    inner = make_subrecord(b"FULL", b"MismatchLie\x00")
+    book = _make_compressed_record(b"BOOK", 0x00000004, inner, declared_size=4)
+
+    entries = _parse_single_record(tmp_path, book)
+
+    assert [e for e in entries if e.record_type == "BOOK"] == []
+
+
+def test_esp_parser_invalid_compressed_stream_is_skipped(tmp_path):
+    """Malformed zlib payload: controlled skip, no exception escaping the parser."""
+    body = struct.pack("<I", 32) + b"this is not a zlib stream at all"
+    book = make_record(b"BOOK", 0x00000005, body, flags=esp_parser_module.FLAG_COMPRESSED)
+
+    entries = _parse_single_record(tmp_path, book)
+
+    assert [e for e in entries if e.record_type == "BOOK"] == []
+
+
+def test_esp_parser_compressed_record_exact_boundaries(tmp_path, monkeypatch):
+    """B9 boundary contract with a patched small cap: cap bytes inflate OK, cap+1 is rejected."""
+    monkeypatch.setattr(esp_parser_module, "MAX_DECOMPRESSED_RECORD_BYTES", 4096)
+
+    def build_inner(target_len: int) -> bytes:
+        text = make_subrecord(b"FULL", b"BoundaryTale\x00")
+        remaining = target_len - len(text)
+        assert remaining >= 6
+        return text + make_subrecord(b"XXXX", b"\x00" * (remaining - 6))
+
+    at_cap = _make_compressed_record(b"BOOK", 0x00000006, build_inner(4096))
+    entries = _parse_single_record(tmp_path, at_cap)
+    assert "BoundaryTale" in [e.text for e in entries if e.record_type == "BOOK"]
+
+    over_cap = _make_compressed_record(b"BOOK", 0x00000007, build_inner(4097))
+    entries_over = _parse_single_record(tmp_path, over_cap)
+    assert [e for e in entries_over if e.record_type == "BOOK"] == []

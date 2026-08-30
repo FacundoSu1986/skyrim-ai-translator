@@ -1,10 +1,15 @@
+import io
 import json
+import shutil
+import uuid
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
+import api
 from api import app, jobs
 
 client = TestClient(app)
@@ -228,6 +233,48 @@ def test_upload_skyrim_data_path_validation(tmp_path):
         )
     assert res_invalid.status_code == 400
     assert "Skyrim Data" in res_invalid.json()["detail"]
+
+
+def _post_upload_payload(filename: str, payload: bytes):
+    return client.post("/api/upload", files={"file": (filename, io.BytesIO(payload), "application/octet-stream")})
+
+
+def test_upload_over_size_limit_returns_413_and_leaves_no_artifacts(monkeypatch):
+    """B4: a payload larger than MAX_UPLOAD_BYTES must be rejected with HTTP 413,
+    must leave no partial file on disk, and must not create a runnable job."""
+    monkeypatch.setattr(api, "MAX_UPLOAD_BYTES", 1024)
+    unique_name = f"oversize_{uuid.uuid4().hex}.json"
+    jobs_root = Path("output/jobs")
+    jobs_before = set(jobs)
+    dirs_before = set(jobs_root.iterdir()) if jobs_root.is_dir() else set()
+
+    res = _post_upload_payload(unique_name, b"x" * 1025)
+
+    assert res.status_code == 413
+    assert set(jobs) == jobs_before, "oversize upload must not create a job"
+    leftovers = list(jobs_root.rglob(unique_name)) if jobs_root.is_dir() else []
+    assert leftovers == [], f"partial upload file left on disk: {leftovers}"
+    dirs_after = set(jobs_root.iterdir()) if jobs_root.is_dir() else set()
+    assert dirs_after == dirs_before, "oversize upload must not leave an orphaned job directory"
+
+
+@pytest.mark.parametrize("payload_size", [1023, 1024])
+def test_upload_at_or_below_size_limit_is_accepted(monkeypatch, payload_size):
+    """B4 boundary contract: exactly MAX_UPLOAD_BYTES (and one byte less) must succeed."""
+    monkeypatch.setattr(api, "MAX_UPLOAD_BYTES", 1024)
+    unique_name = f"within_{uuid.uuid4().hex}.json"
+
+    res = _post_upload_payload(unique_name, b"x" * payload_size)
+
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+    try:
+        saved = Path(jobs[job_id]["file_path"])
+        assert saved.exists()
+        assert saved.stat().st_size == payload_size
+    finally:
+        jobs.pop(job_id, None)
+        shutil.rmtree(Path("output/jobs") / job_id, ignore_errors=True)
 
 
 def test_websocket_empty_plugin_no_mock_fallback(tmp_path):

@@ -39,6 +39,55 @@ FLAG_COMPRESSED = 0x00040000
 FLAG_LOCALIZED = 0x00000080
 RECORD_HEADER_SIZE = 24  # Skyrim standard record header length
 
+# Fail-closed ceiling for the decompressed body of a single compressed record.
+# Legitimate TES5 record bodies sit orders of magnitude below this bound; the
+# ceiling exists to stop crafted zip-bomb streams from exhausting memory.
+MAX_DECOMPRESSED_RECORD_BYTES = 64 * 1024 * 1024
+
+
+def _decompress_record_body(payload: bytes, expected_size: int, tag: bytes, form_id_hex: str) -> bytes | None:
+    """
+    Bounds-checked decompression for a FLAG_COMPRESSED record body.
+
+    Contract: output must inflate to exactly expected_size bytes and never exceed
+    MAX_DECOMPRESSED_RECORD_BYTES. Declared sizes are attacker-controlled metadata
+    and are never trusted on their own; zlib.decompress(bufsize=...) is NOT an
+    output limit and is therefore never used here.
+    Returns None when the record fails the contract (the caller skips it).
+    """
+    if expected_size <= 0 or expected_size > MAX_DECOMPRESSED_RECORD_BYTES:
+        logger.error(
+            "Record %s (%s) declares invalid decompressed size %d; skipping",
+            form_id_hex,
+            tag,
+            expected_size,
+        )
+        return None
+    try:
+        decompressor = zlib.decompressobj()
+        result = decompressor.decompress(payload, MAX_DECOMPRESSED_RECORD_BYTES + 1)
+    except zlib.error as err:
+        logger.error("Error decompressing record %s (%s): %s", form_id_hex, tag, err)
+        return None
+    if len(result) > MAX_DECOMPRESSED_RECORD_BYTES or decompressor.unconsumed_tail:
+        logger.error(
+            "Record %s (%s) inflates beyond the %d-byte bound; skipping possible zip bomb",
+            form_id_hex,
+            tag,
+            MAX_DECOMPRESSED_RECORD_BYTES,
+        )
+        return None
+    if len(result) != expected_size:
+        logger.error(
+            "Record %s (%s) decompressed to %d bytes, expected %d; skipping corrupt record",
+            form_id_hex,
+            tag,
+            len(result),
+            expected_size,
+        )
+        return None
+    return result
+
 
 def _norm_plugin(name: str) -> str:
     """Normalizes plugin filename for case-insensitive canonical mapping."""
@@ -118,11 +167,7 @@ def _iter_records(data: bytes) -> Iterator[tuple[bytes, int, int, str, bytes, in
         if rec_flags & FLAG_COMPRESSED:
             if len(body) >= 4:
                 decompressed_size = struct.unpack("<I", body[:4])[0]
-                try:
-                    body = zlib.decompress(body[4:], bufsize=decompressed_size)
-                except Exception as err:
-                    logger.error("Error decompressing record %s (%s): %s", form_id_hex, tag, err)
-                    body = b""
+                body = _decompress_record_body(body[4:], decompressed_size, tag, form_id_hex) or b""
             else:
                 body = b""
 

@@ -110,10 +110,62 @@ def _zip_dir(build_dir: Path, zip_path: Path) -> None:
                 zipf.write(file_full_path, arcname)
 
 
-def _save_upload_file(upload_file: UploadFile, dest_path: Path) -> None:
-    """Saves uploaded file chunks to disk synchronously in a worker thread."""
-    with open(dest_path, "wb") as f:
-        shutil.copyfileobj(upload_file.file, f)
+# Explicit upload size bound. The largest official TES5 plugin masters are on
+# the order of a hundred-plus MiB; 512 MiB leaves multiple-x headroom for
+# total-conversion-scale plugins while bounding disk/memory exposure per request.
+# Override with the SKYRIM_MAX_UPLOAD_BYTES environment variable (bytes, > 0).
+DEFAULT_MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+
+
+def _init_max_upload_bytes() -> int:
+    raw = os.environ.get("SKYRIM_MAX_UPLOAD_BYTES")
+    if not raw:
+        return DEFAULT_MAX_UPLOAD_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "SKYRIM_MAX_UPLOAD_BYTES=%r no es un entero válido; usando el valor por defecto %d",
+            raw,
+            DEFAULT_MAX_UPLOAD_BYTES,
+        )
+        return DEFAULT_MAX_UPLOAD_BYTES
+    if value <= 0:
+        logger.warning(
+            "SKYRIM_MAX_UPLOAD_BYTES=%d debe ser positivo; usando el valor por defecto %d",
+            value,
+            DEFAULT_MAX_UPLOAD_BYTES,
+        )
+        return DEFAULT_MAX_UPLOAD_BYTES
+    return value
+
+
+MAX_UPLOAD_BYTES = _init_max_upload_bytes()
+
+_UPLOAD_CHUNK_SIZE = 64 * 1024
+
+
+def _save_upload_file(upload_file: UploadFile, dest_path: Path, max_bytes: int) -> None:
+    """Saves uploaded file chunks to disk, rejecting payloads larger than max_bytes.
+
+    On overflow the partial file is deleted and HTTP 413 is raised, so an
+    over-limit upload never leaves partial data behind nor spawns a runnable job.
+    Executed in a worker thread (asyncio.to_thread) by the caller.
+    """
+    written = 0
+    try:
+        with open(dest_path, "wb") as f:
+            while chunk := upload_file.file.read(_UPLOAD_CHUNK_SIZE):
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"El archivo supera el tamaño máximo permitido de {max_bytes} bytes.",
+                    )
+                f.write(chunk)
+    except BaseException:
+        dest_path.unlink(missing_ok=True)
+        raise
 
 
 AVAILABLE_VOICES = [
@@ -224,7 +276,11 @@ async def upload_json(file: UploadFile = File(...), config: str | None = Form(No
 
     safe_name = _sanitize_name(file.filename or "upload.dat")
     file_path = upload_dir / safe_name
-    await asyncio.to_thread(_save_upload_file, file, file_path)
+    try:
+        await asyncio.to_thread(_save_upload_file, file, file_path, MAX_UPLOAD_BYTES)
+    except HTTPException:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
 
     cfg = {}
     transient_api_key = None

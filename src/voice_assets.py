@@ -41,8 +41,10 @@ def _windows_utf16_units(value: str) -> int:
     return len(value.encode("utf-16-le")) // 2
 
 
-def _validate_path_component(comp: str, field_name: str) -> None:
+def validate_path_component(comp: str, field_name: str) -> None:
     """
+    Canonical path-component contract for the whole voice pipeline.
+
     Ensures a directory or filename path component does not contain path traversal,
     separators, null bytes, ASCII control characters, forbidden Windows characters,
     trailing periods/spaces, or reserved Windows device names.
@@ -134,7 +136,7 @@ def build_voice_basename(
             d = d[: 25 - len(q)]
 
     basename = f"{q}_{d}_{fid8}_{response_number}"
-    _validate_path_component(basename, "basename")
+    validate_path_component(basename, "basename")
     return basename
 
 
@@ -148,9 +150,9 @@ def build_voice_relative_path(
     Builds the relative Skyrim voice asset path:
       Sound/Voice/<defining_plugin>/<voice_type>/<basename><extension>
     """
-    _validate_path_component(defining_plugin, "defining_plugin")
-    _validate_path_component(voice_type, "voice_type")
-    _validate_path_component(basename, "basename")
+    validate_path_component(defining_plugin, "defining_plugin")
+    validate_path_component(voice_type, "voice_type")
+    validate_path_component(basename, "basename")
 
     if (
         not extension
@@ -162,7 +164,7 @@ def build_voice_relative_path(
         raise VoiceAssetMetadataError(f"invalid extension: {extension!r}")
 
     filename = f"{basename}{extension}"
-    _validate_path_component(filename, "filename")
+    validate_path_component(filename, "filename")
 
     return Path("Sound") / "Voice" / defining_plugin / voice_type / filename
 
@@ -177,11 +179,11 @@ def validate_voice_asset_entry(entry: StringEntry) -> None:
 
     if not entry.defining_plugin:
         raise VoiceAssetMetadataError(f"StringEntry FormID {entry.form_id} is missing defining_plugin")
-    _validate_path_component(entry.defining_plugin, "defining_plugin")
+    validate_path_component(entry.defining_plugin, "defining_plugin")
 
     if not entry.voice_type:
         raise VoiceAssetMetadataError(f"StringEntry FormID {entry.form_id} is missing voice_type")
-    _validate_path_component(entry.voice_type, "voice_type")
+    validate_path_component(entry.voice_type, "voice_type")
 
     if entry.local_object_id is None:
         raise VoiceAssetMetadataError(f"StringEntry FormID {entry.form_id} is missing local_object_id")
