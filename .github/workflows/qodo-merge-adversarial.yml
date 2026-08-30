@@ -21,6 +21,7 @@ jobs:
   auto-review:
     name: "Auto-revisión en PR interno"
     if: >-
+      github.event.repository.private == false &&
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
       github.event.pull_request.state == 'open' &&
@@ -32,17 +33,25 @@ jobs:
       pull-requests: write
       issues: write
     env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-      OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+      HAS_OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
     steps:
       - name: "Ejecutar Qodo Merge / PR-Agent"
-        if: env.DEEPSEEK_API_KEY != '' || env.OPENAI_KEY != ''
+        if: env.HAS_OPENROUTER_KEY == 'true'
         uses: Codium-ai/pr-agent@4ebd5c5333c6ef21509e7304d27969eb825e6f22 # v0.43.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Data policy: .github/AI_REVIEW_DATA_POLICY.md — solo datos públicos; revisar proveedores antes de cambiar modelos.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER__KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CONFIG.MODEL: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+          CONFIG.FALLBACK_MODELS: '["openrouter/minimax/minimax-m3:free", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"]'
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: "200000"
+          LITELLM.DROP_PARAMS: "true"
 
   comment-command:
     name: "Comando seguro en comentario"
     if: >-
+      github.event.repository.private == false &&
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request != null &&
       github.event.issue.state == 'open' &&
@@ -57,9 +66,7 @@ jobs:
       pull-requests: write
       issues: write
     env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-      OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+      HAS_OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
     steps:
       - name: "Validar comando permitido"
         id: gate
@@ -124,5 +131,14 @@ jobs:
           fi
 
       - name: "Ejecutar Qodo Merge / PR-Agent"
-        if: steps.gate.outputs.run == 'true' && (env.DEEPSEEK_API_KEY != '' || env.OPENAI_KEY != '')
+        if: steps.gate.outputs.run == 'true' && env.HAS_OPENROUTER_KEY == 'true'
         uses: Codium-ai/pr-agent@4ebd5c5333c6ef21509e7304d27969eb825e6f22 # v0.43.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Data policy: .github/AI_REVIEW_DATA_POLICY.md — solo datos públicos; revisar proveedores antes de cambiar modelos.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER__KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CONFIG.MODEL: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+          CONFIG.FALLBACK_MODELS: '["openrouter/minimax/minimax-m3:free", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"]'
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: "200000"
+          LITELLM.DROP_PARAMS: "true"
