@@ -4,7 +4,7 @@ import shutil
 import uuid
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -272,6 +272,148 @@ def test_upload_at_or_below_size_limit_is_accepted(monkeypatch, payload_size):
         saved = Path(jobs[job_id]["file_path"])
         assert saved.exists()
         assert saved.stat().st_size == payload_size
+    finally:
+        jobs.pop(job_id, None)
+        shutil.rmtree(Path("output/jobs") / job_id, ignore_errors=True)
+
+
+# --- Pre-parser request boundary for POST /api/upload (B4 hardening) ---
+
+
+def _assert_no_upload_side_effects(sentinel, jobs_before, dirs_before):
+    """The endpoint contract for an over-limit request: it must never run."""
+    assert sentinel.call_count == 0, "endpoint file-saver must never execute for an over-limit request"
+    assert set(jobs) == jobs_before, "over-limit request must not register a job"
+    jobs_root = Path("output/jobs")
+    dirs_after = set(jobs_root.iterdir()) if jobs_root.is_dir() else set()
+    assert dirs_after == dirs_before, "over-limit request must not leave a job directory on disk"
+
+
+def test_upload_request_over_limit_rejected_before_endpoint_via_content_length(monkeypatch):
+    """T-B4-1: a request whose declared Content-Length exceeds the request budget is
+    rejected with HTTP 413 at the ASGI boundary, before the endpoint ever runs."""
+    monkeypatch.setattr(api, "MAX_UPLOAD_REQUEST_BYTES", 256)
+    sentinel = MagicMock(side_effect=AssertionError("endpoint must not run"))
+    monkeypatch.setattr(api, "_save_upload_file", sentinel)
+    jobs_before = set(jobs)
+    jobs_root = Path("output/jobs")
+    dirs_before = set(jobs_root.iterdir()) if jobs_root.is_dir() else set()
+
+    payload = json.dumps([{"FormID": "0001", "Text": "x" * 600}]).encode()
+    res = client.post("/api/upload", files={"file": ("big.json", io.BytesIO(payload), "application/json")})
+
+    assert res.status_code == 413
+    _assert_no_upload_side_effects(sentinel, jobs_before, dirs_before)
+
+
+def _make_raw_asgi_scope(body_chunks: list[bytes], headers: list[tuple[bytes, bytes]]) -> dict:
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/upload",
+        "raw_path": b"/api/upload",
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+        "state": {},
+    }
+
+
+def _drive_raw_asgi(scope, body_chunks: list[bytes]):
+    """Feeds scripted http.request chunks through the real ASGI stack and captures responses."""
+    sent = []
+    state = {"i": 0}
+
+    async def receive():
+        idx = state["i"]
+        if idx < len(body_chunks):
+            state["i"] += 1
+            return {"type": "http.request", "body": body_chunks[idx], "more_body": idx + 1 < len(body_chunks)}
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    import asyncio
+
+    asyncio.run(app(scope, receive, send))
+    return sent
+
+
+_MULTIPART_PREAMBLE = (
+    b"--fx\r\n"
+    b'Content-Disposition: form-data; name="file"; filename="a.json"\r\n'
+    b"Content-Type: application/octet-stream\r\n"
+    b"\r\n"
+)
+
+
+def test_upload_chunked_body_without_content_length_is_bounded(monkeypatch):
+    """T-B4-2 (direct ASGI seam): a request without Content-Length is still bounded;
+    crossing the budget mid-stream yields 413 and no endpoint execution."""
+    monkeypatch.setattr(api, "MAX_UPLOAD_REQUEST_BYTES", 250)
+    sentinel = MagicMock(side_effect=AssertionError("endpoint must not run"))
+    monkeypatch.setattr(api, "_save_upload_file", sentinel)
+    jobs_before = set(jobs)
+    jobs_root = Path("output/jobs")
+    dirs_before = set(jobs_root.iterdir()) if jobs_root.is_dir() else set()
+
+    # Valid multipart framing so the parser keeps streaming while bytes accumulate.
+    chunks = [_MULTIPART_PREAMBLE, b"0" * 100, b"1" * 100]  # 101 + 100 + 100 = 301 > 250
+    scope = _make_raw_asgi_scope(chunks, headers=[(b"content-type", b"multipart/form-data; boundary=fx")])
+    sent = _drive_raw_asgi(scope, chunks)
+
+    response_starts = [m for m in sent if m["type"] == "http.response.start"]
+    assert response_starts, "no response was sent"
+    assert response_starts[0]["status"] == 413
+    _assert_no_upload_side_effects(sentinel, jobs_before, dirs_before)
+
+
+def test_upload_dishonest_content_length_does_not_bypass_stream_counting(monkeypatch):
+    """T-B4-3: Content-Length is only an early optimization, never the authoritative
+    boundary: a low CL with a larger actual body is still stopped, and the endpoint
+    is not invoked after the overflow."""
+    monkeypatch.setattr(api, "MAX_UPLOAD_REQUEST_BYTES", 500)
+    sentinel = MagicMock(side_effect=AssertionError("endpoint must not run"))
+    monkeypatch.setattr(api, "_save_upload_file", sentinel)
+    jobs_before = set(jobs)
+    jobs_root = Path("output/jobs")
+    dirs_before = set(jobs_root.iterdir()) if jobs_root.is_dir() else set()
+
+    # CL claims 10 bytes while the real body delivers 601; counting wins.
+    chunks = [_MULTIPART_PREAMBLE, b"0" * 500]
+    scope = _make_raw_asgi_scope(
+        chunks,
+        headers=[
+            (b"content-type", b"multipart/form-data; boundary=fx"),
+            (b"content-length", b"10"),
+        ],
+    )
+    sent = _drive_raw_asgi(scope, chunks)
+
+    response_starts = [m for m in sent if m["type"] == "http.response.start"]
+    assert response_starts[0]["status"] == 413
+    _assert_no_upload_side_effects(sentinel, jobs_before, dirs_before)
+
+
+def test_upload_normal_multipart_under_request_limit_succeeds(tmp_path, monkeypatch):
+    """T-B4-4: a normal multipart upload comfortably under the request budget still works."""
+    monkeypatch.setattr(api, "MAX_UPLOAD_REQUEST_BYTES", 8192)
+    test_json = tmp_path / "SmallMod.json"
+    test_json.write_text('[{"FormID": "0001", "Text": "Hi"}]', encoding="utf-8")
+
+    with open(test_json, "rb") as f:
+        res = client.post("/api/upload", files={"file": ("SmallMod.json", f, "application/json")})
+
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+    try:
+        assert jobs[job_id]["plugin_name"] == "SmallMod"
     finally:
         jobs.pop(job_id, None)
         shutil.rmtree(Path("output/jobs") / job_id, ignore_errors=True)

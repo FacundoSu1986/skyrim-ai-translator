@@ -110,10 +110,10 @@ def _zip_dir(build_dir: Path, zip_path: Path) -> None:
                 zipf.write(file_full_path, arcname)
 
 
-# Explicit upload size bound. The largest official TES5 plugin masters are on
-# the order of a hundred-plus MiB; 512 MiB leaves multiple-x headroom for
-# total-conversion-scale plugins while bounding disk/memory exposure per request.
-# Override with the SKYRIM_MAX_UPLOAD_BYTES environment variable (bytes, > 0).
+# Explicit upload size policy. 512 MiB is a conservative application-level
+# default chosen to be comfortably above any realistic plugin/JSON dump while
+# bounding disk/memory exposure per request; it is NOT a measurement of any
+# specific plugin's size. Override with SKYRIM_MAX_UPLOAD_BYTES (bytes, > 0).
 DEFAULT_MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
 
@@ -166,6 +166,123 @@ def _save_upload_file(upload_file: UploadFile, dest_path: Path, max_bytes: int) 
     except BaseException:
         dest_path.unlink(missing_ok=True)
         raise
+
+
+# --- Pre-parser request boundary for POST /api/upload -----------------------
+#
+# FastAPI/Starlette fully parses multipart bodies (spooling file parts to disk
+# via SpooledTemporaryFile) BEFORE the endpoint executes, so _save_upload_file's
+# per-file bound alone cannot stop an over-limit request from consuming disk.
+# The middleware below enforces a total request-body bound at the ASGI layer,
+# before routing and before any multipart parsing happens.
+#
+# MAX_UPLOAD_REQUEST_BYTES is the TOTAL multipart request budget. It must stay
+# above MAX_UPLOAD_BYTES because multipart framing, part headers and the
+# `config` form field add bounded overhead around the file payload; equal
+# values would incorrectly reject a file that is exactly at the file limit.
+UPLOAD_MULTIPART_OVERHEAD_BYTES = 1024 * 1024  # 1 MiB allowance for multipart framing/headers/config
+
+
+def _init_max_upload_request_bytes() -> int:
+    raw = os.environ.get("SKYRIM_MAX_UPLOAD_REQUEST_BYTES")
+    if not raw:
+        return MAX_UPLOAD_BYTES + UPLOAD_MULTIPART_OVERHEAD_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "SKYRIM_MAX_UPLOAD_REQUEST_BYTES=%r no es un entero válido; usando MAX_UPLOAD_BYTES + overhead",
+            raw,
+        )
+        return MAX_UPLOAD_BYTES + UPLOAD_MULTIPART_OVERHEAD_BYTES
+    if value <= 0:
+        logger.warning(
+            "SKYRIM_MAX_UPLOAD_REQUEST_BYTES=%d debe ser positivo; usando MAX_UPLOAD_BYTES + overhead",
+            value,
+        )
+        return MAX_UPLOAD_BYTES + UPLOAD_MULTIPART_OVERHEAD_BYTES
+    return value
+
+
+MAX_UPLOAD_REQUEST_BYTES = _init_max_upload_request_bytes()
+
+
+def _parse_content_length(headers) -> int | None:
+    """Returns the first valid Content-Length header value, or None.
+
+    Content-Length is only ever an early-rejection optimization, never the
+    authoritative boundary, so ambiguous/duplicate/invalid values safely fall
+    back to streaming byte counting.
+    """
+    try:
+        values = [v.strip() for k, v in headers if k.lower() == b"content-length"]
+    except AttributeError:
+        return None
+    if not values:
+        return None
+    try:
+        value = int(values[0])
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+async def _send_upload_too_large(send, limit: int) -> None:
+    body = json.dumps({"detail": f"El request supera el tamaño máximo permitido de {limit} bytes."}).encode("utf-8")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+class UploadRequestSizeLimitMiddleware:
+    """Pure ASGI request-body boundary scoped to POST /api/upload.
+
+    Enforces the total request budget BEFORE the server framework parses
+    multipart content. Content-Length provides early rejection; actual ASGI
+    http.request bytes are the authoritative count, so chunked or header-less
+    bodies are bounded identically. On overflow the endpoint never executes.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or scope.get("method") != "POST" or scope.get("path") != "/api/upload":
+            await self.app(scope, receive, send)
+            return
+
+        limit = MAX_UPLOAD_REQUEST_BYTES
+        content_length = _parse_content_length(scope.get("headers", []))
+        if content_length is not None and content_length > limit:
+            await _send_upload_too_large(send, limit)
+            return
+
+        received = 0
+
+        async def guarded_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    # HTTPException is re-raised untouched by FastAPI's body parsing
+                    # (fastapi/routing.py), so the client receives a genuine 413
+                    # instead of a generic 400 parse error.
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"El request supera el tamaño máximo permitido de {limit} bytes.",
+                    )
+            return message
+
+        await self.app(scope, guarded_receive, send)
+
+
+app.add_middleware(UploadRequestSizeLimitMiddleware)
 
 
 AVAILABLE_VOICES = [

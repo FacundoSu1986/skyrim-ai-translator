@@ -86,6 +86,24 @@ def _decompress_record_body(payload: bytes, expected_size: int, tag: bytes, form
             expected_size,
         )
         return None
+    # Strict stream completeness: the whole zlib stream must be consumed exactly.
+    # A truncated stream can still yield every expected byte (eof never set), and
+    # trailing bytes after the stream end are never part of the TES5 record contract.
+    if not decompressor.eof:
+        logger.error(
+            "Record %s (%s) has an incomplete zlib stream (missing end/checksum); skipping",
+            form_id_hex,
+            tag,
+        )
+        return None
+    if decompressor.unused_data:
+        logger.error(
+            "Record %s (%s) has %d unexpected trailing bytes after the zlib stream; skipping",
+            form_id_hex,
+            tag,
+            len(decompressor.unused_data),
+        )
+        return None
     return result
 
 

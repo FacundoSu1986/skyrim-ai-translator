@@ -1483,14 +1483,12 @@ def test_esp_parser_valid_compressed_record_is_parsed(tmp_path):
     assert "A Valid Compressed Tale" in texts
 
 
-def test_esp_parser_compressed_record_declared_size_over_cap_is_skipped(tmp_path):
+def test_esp_parser_compressed_record_declared_size_over_cap_is_skipped(tmp_path, monkeypatch):
     """B9: a record whose declared decompressed size exceeds the parser bound must be
     skipped instead of trusted; the declared size is attacker-controlled metadata."""
-    # Fallback mirrors the intended 64 MiB bound so this test demonstrates the
-    # missing protection behaviorally when the constant does not exist yet (RED).
-    cap = getattr(esp_parser_module, "MAX_DECOMPRESSED_RECORD_BYTES", 64 * 1024 * 1024)
+    monkeypatch.setattr(esp_parser_module, "MAX_DECOMPRESSED_RECORD_BYTES", 4096)
     inner = make_subrecord(b"FULL", b"DeclaredOversize\x00")
-    declared = cap + 1
+    declared = esp_parser_module.MAX_DECOMPRESSED_RECORD_BYTES + 1
     book = _make_compressed_record(b"BOOK", 0x00000002, inner, declared_size=declared)
 
     entries = _parse_single_record(tmp_path, book)
@@ -1512,18 +1510,47 @@ def _pad_subrecords(total_len: int) -> bytes:
     return b"".join(parts)
 
 
-def test_esp_parser_compressed_record_inflating_beyond_cap_is_skipped(tmp_path):
-    """B9 reproducer: a zip-bomb record whose ACTUAL inflation exceeds the bound must be
-    skipped even when the declared header matches. The current zlib.decompress(..., bufsize=N)
-    usage does not bound output, so this is RED before the fix."""
-    cap = getattr(esp_parser_module, "MAX_DECOMPRESSED_RECORD_BYTES", 64 * 1024 * 1024)
+def test_esp_parser_compressed_record_inflating_beyond_cap_is_skipped(tmp_path, monkeypatch):
+    """B9 reproducer (T-B9-4): a zip-bomb record whose ACTUAL inflation exceeds the bound
+    must be skipped even when the declared header stays under it. The cap is patched to a
+    small value so the test exercises the contract with a few KiB, never 64 MiB."""
+    monkeypatch.setattr(esp_parser_module, "MAX_DECOMPRESSED_RECORD_BYTES", 4096)
+    cap = esp_parser_module.MAX_DECOMPRESSED_RECORD_BYTES
     text = make_subrecord(b"FULL", b"BombTextShouldNotSurvive\x00")
     inner = text + _pad_subrecords((cap + 1) - len(text))
     assert len(inner) == cap + 1
 
-    book = _make_compressed_record(b"BOOK", 0x00000003, inner)
+    # Declared size stays inside the bound so only the inflation machinery can catch this.
+    book = _make_compressed_record(b"BOOK", 0x00000003, inner, declared_size=cap)
     compressed_on_disk = len(zlib.compress(inner))
     assert compressed_on_disk < cap  # the bomb is small on disk
+
+    entries = _parse_single_record(tmp_path, book)
+
+    assert [e for e in entries if e.record_type == "BOOK"] == []
+
+
+def test_esp_parser_compressed_record_truncated_trailer_is_skipped(tmp_path):
+    """T-B9-2: a zlib stream with its final checksum/trailer bytes removed still produces
+    every expected output byte, so only strict stream completeness (eof) can reject it."""
+    inner = make_subrecord(b"FULL", b"TruncatedTrailer\x00")
+    stream = zlib.compress(inner)
+    truncated = stream[:-4]
+    body = struct.pack("<I", len(inner)) + truncated
+    book = make_record(b"BOOK", 0x00000008, body, flags=esp_parser_module.FLAG_COMPRESSED)
+
+    entries = _parse_single_record(tmp_path, book)
+
+    assert [e for e in entries if e.record_type == "BOOK"] == []
+
+
+def test_esp_parser_compressed_record_trailing_garbage_is_skipped(tmp_path):
+    """T-B9-3: a valid zlib stream followed by trailing garbage inside the record body
+    violates the exact stream contract (unused_data must be empty) and is skipped."""
+    inner = make_subrecord(b"FULL", b"HasTrailingGarbage\x00")
+    stream = zlib.compress(inner) + b"GARBAGE-TAIL"
+    body = struct.pack("<I", len(inner)) + stream
+    book = make_record(b"BOOK", 0x00000009, body, flags=esp_parser_module.FLAG_COMPRESSED)
 
     entries = _parse_single_record(tmp_path, book)
 
