@@ -39,14 +39,6 @@ _default_cors = [
 _cors_raw = os.environ.get("CORS_ORIGINS")
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()] if _cors_raw else _default_cors
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # In-memory storage for translation jobs and locks per mod
 jobs = {}
 _mod_locks: dict[str, asyncio.Lock] = {}
@@ -110,10 +102,10 @@ def _zip_dir(build_dir: Path, zip_path: Path) -> None:
                 zipf.write(file_full_path, arcname)
 
 
-# Explicit upload size policy. 512 MiB is a conservative application-level
-# default chosen to be comfortably above any realistic plugin/JSON dump while
-# bounding disk/memory exposure per request; it is NOT a measurement of any
-# specific plugin's size. Override with SKYRIM_MAX_UPLOAD_BYTES (bytes, > 0).
+# Explicit upload size policy. 512 MiB is a configurable conservative
+# application policy chosen to bound disk/memory exposure per request; it is
+# NOT a measurement of any specific plugin's size. Override with
+# SKYRIM_MAX_UPLOAD_BYTES (bytes, > 0).
 DEFAULT_MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
 
@@ -284,6 +276,17 @@ class UploadRequestSizeLimitMiddleware:
 
 app.add_middleware(UploadRequestSizeLimitMiddleware)
 
+# Register CORS after UploadRequestSizeLimitMiddleware so CORSMiddleware wraps
+# the upload-size middleware. This guarantees that an early-413 response
+# (Content-Length exceeding the request budget) carries the configured
+# Access-Control-Allow-Origin header for allowed cross-origin clients.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 AVAILABLE_VOICES = [
     {"id": "es-ES-AlvaroNeural", "name": "Álvaro (Español España - Masculino)", "lang": "es-ES"},

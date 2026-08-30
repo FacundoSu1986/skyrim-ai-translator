@@ -401,6 +401,42 @@ def test_upload_dishonest_content_length_does_not_bypass_stream_counting(monkeyp
     _assert_no_upload_side_effects(sentinel, jobs_before, dirs_before)
 
 
+def test_upload_early_413_preserves_cors_headers(monkeypatch):
+    """CORS contract on the early-413 path: an allowed cross-origin POST whose
+    declared Content-Length exceeds the request budget must return HTTP 413 that
+    still carries Access-Control-Allow-Origin for the configured origin.
+
+    CORSMiddleware is registered AFTER UploadRequestSizeLimitMiddleware so it
+    wraps the upload-size middleware; otherwise the early-413 response sent
+    directly by the size middleware would bypass CORS entirely.
+    """
+    monkeypatch.setattr(api, "MAX_UPLOAD_REQUEST_BYTES", 256)
+    sentinel = MagicMock(side_effect=AssertionError("endpoint must not run"))
+    monkeypatch.setattr(api, "_save_upload_file", sentinel)
+    jobs_before = set(jobs)
+    jobs_root = Path("output/jobs")
+    dirs_before = set(jobs_root.iterdir()) if jobs_root.is_dir() else set()
+
+    origin = "http://localhost:5173"
+    scope = _make_raw_asgi_scope(
+        [b"irrelevant"],
+        headers=[
+            (b"content-type", b"multipart/form-data; boundary=fx"),
+            (b"content-length", str(api.MAX_UPLOAD_REQUEST_BYTES + 100).encode()),
+            (b"origin", origin.encode()),
+        ],
+    )
+    sent = _drive_raw_asgi(scope, [b"irrelevant"])
+
+    response_starts = [m for m in sent if m["type"] == "http.response.start"]
+    assert response_starts, "no response was sent"
+    assert response_starts[0]["status"] == 413
+    headers = {k.decode("latin1").lower(): v.decode("latin1") for k, v in response_starts[0]["headers"]}
+    assert headers.get("access-control-allow-origin") == origin, f"CORS missing on early-413: {headers}"
+    assert headers.get("access-control-allow-credentials") == "true"
+    _assert_no_upload_side_effects(sentinel, jobs_before, dirs_before)
+
+
 def test_upload_normal_multipart_under_request_limit_succeeds(tmp_path, monkeypatch):
     """T-B4-4: a normal multipart upload comfortably under the request budget still works."""
     monkeypatch.setattr(api, "MAX_UPLOAD_REQUEST_BYTES", 8192)
