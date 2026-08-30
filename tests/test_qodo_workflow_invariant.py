@@ -9,7 +9,7 @@ en:
 3. Bloqueo fail-closed de repositorios privados.
 4. Restricci?n de PRs internos y bloqueo de forks (auto-review y comment-command).
 5. Autorizaci?n estricta de comentarios (OWNER/MEMBER/COLLABORATOR y exclusi?n de bots).
-6. Scope m?nimo de secrets (OPENROUTER_API_KEY restringida exclusivamente al step PR-Agent).
+6. Scope m?nimo de secrets (OPENROUTER_API_KEY restringida exclusivamente al step PR-Agent, sin secretos en if).
 7. Correspondencia exacta con la allowlist de modelos de la pol?tica de datos.
 
 Cualquier invocaci?n no inventariada, modificaci?n de gates o exposici?n
@@ -217,13 +217,13 @@ def test_restricciones_de_seguridad_y_fork_gate() -> None:
 
 
 def test_scope_minimo_de_secrets_openrouter() -> None:
-    """Verifica que OPENROUTER_API_KEY y OPENROUTER__KEY no existan a nivel job y solo est?n en el step PR-Agent."""
+    """Verifica que OPENROUTER_API_KEY y OPENROUTER__KEY no existan a nivel job, no se usen en if, y solo est?n en el step PR-Agent."""
     workflows = parsear_todos_los_workflows()
 
     for archivo_nombre, data in workflows.items():
         jobs = data.get("jobs", {})
         for job_id, job_data in jobs.items():
-            # Aserci?n 1: Ning?n job define variables de OpenRouter a nivel job
+            # Aserci?n 1: Ning?n job define variables directas de OpenRouter a nivel job
             job_env = job_data.get("env", {})
             if isinstance(job_env, dict):
                 for secret_key in ("OPENROUTER_API_KEY", "OPENROUTER__KEY"):
@@ -231,9 +231,20 @@ def test_scope_minimo_de_secrets_openrouter() -> None:
                         f"Violaci?n de least-privilege: '{secret_key}' expuesta a nivel de job en {archivo_nombre} / {job_id}"
                     )
 
-            # Aserci?n 2: Los steps que NO invocan PR-Agent no reciben variables de OpenRouter
+            # Aserci?n 2: Ning?n if de job ni de step usa el contexto secrets directamente (invalido en GitHub Actions runner)
+            job_if = str(job_data.get("if", ""))
+            assert "secrets." not in job_if, (
+                f"Contexto 'secrets' no permitido en job.if en {archivo_nombre} / {job_id}: {job_if!r}"
+            )
+
             steps = job_data.get("steps", [])
             for idx, step in enumerate(steps):
+                step_if = str(step.get("if", ""))
+                assert "secrets." not in step_if, (
+                    f"Contexto 'secrets' no permitido en step.if (step {idx}) en {archivo_nombre} / {job_id}: {step_if!r}"
+                )
+
+                # Aserci?n 3: Los steps que NO invocan PR-Agent no reciben variables de OpenRouter
                 uses = str(step.get("uses", "")).strip()
                 action_repo, _, _ = uses.partition("@")
                 step_env = step.get("env", {})

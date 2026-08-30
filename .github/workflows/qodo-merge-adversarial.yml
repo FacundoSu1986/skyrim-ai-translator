@@ -1,4 +1,4 @@
-﻿name: "Qodo Merge - Revisor Adversarial Interactivo"
+name: "Qodo Merge - Revisor Adversarial Interactivo"
 
 on:
   pull_request:
@@ -32,9 +32,11 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+    env:
+      HAS_OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
     steps:
       - name: "Ejecutar Qodo Merge / PR-Agent"
-        if: secrets.OPENROUTER_API_KEY != ''
+        if: env.HAS_OPENROUTER_KEY == 'true'
         uses: Codium-ai/pr-agent@4ebd5c5333c6ef21509e7304d27969eb825e6f22 # v0.43.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -63,6 +65,8 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+    env:
+      HAS_OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
     steps:
       - name: "Validar comando permitido"
         id: gate
@@ -127,7 +131,7 @@ jobs:
           fi
 
       - name: "Ejecutar Qodo Merge / PR-Agent"
-        if: steps.gate.outputs.run == 'true' && secrets.OPENROUTER_API_KEY != ''
+        if: steps.gate.outputs.run == 'true' && env.HAS_OPENROUTER_KEY == 'true'
         uses: Codium-ai/pr-agent@4ebd5c5333c6ef21509e7304d27969eb825e6f22 # v0.43.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -138,8 +142,3 @@ jobs:
           CONFIG.FALLBACK_MODELS: '["openrouter/minimax/minimax-m3:free", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"]'
           CONFIG.CUSTOM_MODEL_MAX_TOKENS: "200000"
           LITELLM.DROP_PARAMS: "true"
-
-
-
-
-
