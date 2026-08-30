@@ -5,6 +5,7 @@ import pytest
 
 from src.models import StringEntry
 from src.tts_generator import generate_voice_file
+from src.voice_assets import VoiceAssetMetadataError
 
 
 @pytest.mark.asyncio
@@ -176,3 +177,96 @@ async def test_generate_voice_file_without_index_keeps_plain_name(tmp_path):
     assert success is True
     assert (out_dir / "MaleGuard" / "00000999.mp3").exists()
     assert not list(out_dir.rglob("00000999_*.mp3"))
+
+
+class _SilentCommunicate:
+    """TTS double that reports success without doing real work.
+
+    If path validation is bypassed, save() must NOT turn an injected payload
+    into a real write; the guard must trigger before save is ever called.
+    """
+
+    def __init__(self, text, voice):
+        pass
+
+    async def save(self, filepath):
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        Path(filepath).write_text("audio data")
+        raise AssertionError("tts save() must never run with a malicious path")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "malicious_voice_type",
+    ["..", "../escape", "../../../escape", "a/../../escape", "C:\\evil", "voice_\x00type", "CON"],
+)
+async def test_generate_voice_file_rejects_traversing_voice_type(tmp_path, malicious_voice_type):
+    """B1: attacker-controlled voice_type must fail fast and create NOTHING outside the staging root."""
+    out_dir = tmp_path / "staging"
+    entry = StringEntry(
+        form_id="00000001",
+        text="Hello",
+        translated_text="Hola",
+        is_dialog=True,
+        voice_type=malicious_voice_type,
+    )
+
+    with pytest.raises(VoiceAssetMetadataError):
+        await generate_voice_file(entry, str(out_dir), tts_class=_SilentCommunicate)
+
+    assert not list(tmp_path.rglob("*.mp3")), "malicious voice_type wrote an .mp3 outside the staging root"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "malicious_form_id",
+    ["../escape", "..\\..\\win", "0000\x00001", "CON", "form id\x1f"],
+)
+async def test_generate_voice_file_rejects_traversing_form_id(tmp_path, malicious_form_id):
+    """B1: attacker-controlled form_id must fail fast and create NOTHING outside the staging root."""
+    out_dir = tmp_path / "staging"
+    entry = StringEntry(
+        form_id=malicious_form_id,
+        text="Hello",
+        translated_text="Hola",
+        is_dialog=True,
+        voice_type="MaleGuard",
+    )
+
+    with pytest.raises(VoiceAssetMetadataError):
+        await generate_voice_file(entry, str(out_dir), tts_class=_SilentCommunicate)
+
+    assert not list(tmp_path.rglob("*.mp3")), "malicious form_id wrote an .mp3 outside the staging root"
+
+
+@pytest.mark.asyncio
+async def test_generate_voice_file_stays_under_staging_root(tmp_path):
+    """B1 positive contract: the produced path must resolve strictly under the requested output dir."""
+    out_dir = tmp_path / "staging"
+    entry = StringEntry(
+        form_id="0001A697",
+        text="Hello",
+        translated_text="Hola",
+        is_dialog=True,
+        voice_type="MaleGuard",
+    )
+
+    written: list[Path] = []
+
+    class RecordingCommunicate:
+        def __init__(self, text, voice):
+            pass
+
+        async def save(self, filepath):
+            Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+            Path(filepath).write_text("audio data")
+            written.append(Path(filepath))
+
+    success = await generate_voice_file(entry, str(out_dir), tts_class=RecordingCommunicate)
+
+    assert success is True
+    assert len(written) == 1
+    root = out_dir.resolve()
+    resolved_file = written[0].resolve()
+    assert resolved_file.is_relative_to(root), f"{resolved_file} escaped {root}"
+    assert resolved_file.exists()

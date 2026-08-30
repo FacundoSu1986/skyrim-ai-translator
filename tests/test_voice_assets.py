@@ -9,11 +9,11 @@ import pytest
 from src.models import StringEntry
 from src.voice_assets import (
     VoiceAssetMetadataError,
-    _validate_path_component,
     build_voice_basename,
     build_voice_relative_path,
     pack_fuz,
     unpack_fuz,
+    validate_path_component,
     validate_voice_asset_entry,
 )
 
@@ -373,19 +373,19 @@ def test_unpack_fuz_rejects_malformed_container(corrupted_bytes):
 def test_windows_component_length():
     # A. 255 ASCII characters as a standalone validated component -> accepted
     valid_255 = "a" * 255
-    _validate_path_component(valid_255, "plugin")
+    validate_path_component(valid_255, "plugin")
 
     # B. 256 ASCII characters -> rejected
     invalid_256 = "a" * 256
     with pytest.raises(VoiceAssetMetadataError, match="plugin exceeds Windows component length limit"):
-        _validate_path_component(invalid_256, "plugin")
+        validate_path_component(invalid_256, "plugin")
 
     # C. Unicode supplementary characters whose UTF-16 representation exceeds 255 code units -> rejected
     # 𐍈 is U+10348 (GOTHIC LETTER HWAIR), takes 2 UTF-16 code units.
     # 128 of them takes 256 code units, even though it's 128 characters.
     invalid_utf16_256 = "\U00010348" * 128
     with pytest.raises(VoiceAssetMetadataError, match="plugin exceeds Windows component length limit"):
-        _validate_path_component(invalid_utf16_256, "plugin")
+        validate_path_component(invalid_utf16_256, "plugin")
 
     # D. Final filename exactly at the limit after adding extension -> accepted.
     # 251 chars + ".fuz" (4 chars) = 255 chars
@@ -396,11 +396,11 @@ def test_windows_component_length():
     # E. A basename that fits alone but basename + ".fuz" exceeds the component limit -> rejected.
     # 252 chars + ".fuz" (4 chars) = 256 chars
     basename_252 = "a" * 252
-    _validate_path_component(basename_252, "basename")  # should not raise
+    validate_path_component(basename_252, "basename")  # should not raise
     with pytest.raises(VoiceAssetMetadataError, match="filename exceeds Windows component length limit"):
         build_voice_relative_path("Skyrim.esm", "MaleNord", basename_252)
 
 
 def test_windows_component_invalid_surrogate():
     with pytest.raises(VoiceAssetMetadataError, match="plugin contains invalid Unicode surrogate data"):
-        _validate_path_component("\ud800", "plugin")
+        validate_path_component("\ud800", "plugin")

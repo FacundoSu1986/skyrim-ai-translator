@@ -39,14 +39,6 @@ _default_cors = [
 _cors_raw = os.environ.get("CORS_ORIGINS")
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()] if _cors_raw else _default_cors
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # In-memory storage for translation jobs and locks per mod
 jobs = {}
 _mod_locks: dict[str, asyncio.Lock] = {}
@@ -110,11 +102,191 @@ def _zip_dir(build_dir: Path, zip_path: Path) -> None:
                 zipf.write(file_full_path, arcname)
 
 
-def _save_upload_file(upload_file: UploadFile, dest_path: Path) -> None:
-    """Saves uploaded file chunks to disk synchronously in a worker thread."""
-    with open(dest_path, "wb") as f:
-        shutil.copyfileobj(upload_file.file, f)
+# Explicit upload size policy. 512 MiB is a configurable conservative
+# application policy chosen to bound disk/memory exposure per request; it is
+# NOT a measurement of any specific plugin's size. Override with
+# SKYRIM_MAX_UPLOAD_BYTES (bytes, > 0).
+DEFAULT_MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
+
+def _init_max_upload_bytes() -> int:
+    raw = os.environ.get("SKYRIM_MAX_UPLOAD_BYTES")
+    if not raw:
+        return DEFAULT_MAX_UPLOAD_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "SKYRIM_MAX_UPLOAD_BYTES=%r no es un entero válido; usando el valor por defecto %d",
+            raw,
+            DEFAULT_MAX_UPLOAD_BYTES,
+        )
+        return DEFAULT_MAX_UPLOAD_BYTES
+    if value <= 0:
+        logger.warning(
+            "SKYRIM_MAX_UPLOAD_BYTES=%d debe ser positivo; usando el valor por defecto %d",
+            value,
+            DEFAULT_MAX_UPLOAD_BYTES,
+        )
+        return DEFAULT_MAX_UPLOAD_BYTES
+    return value
+
+
+MAX_UPLOAD_BYTES = _init_max_upload_bytes()
+
+_UPLOAD_CHUNK_SIZE = 64 * 1024
+
+
+def _save_upload_file(upload_file: UploadFile, dest_path: Path, max_bytes: int) -> None:
+    """Saves uploaded file chunks to disk, rejecting payloads larger than max_bytes.
+
+    On overflow the partial file is deleted and HTTP 413 is raised, so an
+    over-limit upload never leaves partial data behind nor spawns a runnable job.
+    Executed in a worker thread (asyncio.to_thread) by the caller.
+    """
+    written = 0
+    try:
+        with open(dest_path, "wb") as f:
+            while chunk := upload_file.file.read(_UPLOAD_CHUNK_SIZE):
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"El archivo supera el tamaño máximo permitido de {max_bytes} bytes.",
+                    )
+                f.write(chunk)
+    except BaseException:
+        dest_path.unlink(missing_ok=True)
+        raise
+
+
+# --- Pre-parser request boundary for POST /api/upload -----------------------
+#
+# FastAPI/Starlette fully parses multipart bodies (spooling file parts to disk
+# via SpooledTemporaryFile) BEFORE the endpoint executes, so _save_upload_file's
+# per-file bound alone cannot stop an over-limit request from consuming disk.
+# The middleware below enforces a total request-body bound at the ASGI layer,
+# before routing and before any multipart parsing happens.
+#
+# MAX_UPLOAD_REQUEST_BYTES is the TOTAL multipart request budget. It must stay
+# above MAX_UPLOAD_BYTES because multipart framing, part headers and the
+# `config` form field add bounded overhead around the file payload; equal
+# values would incorrectly reject a file that is exactly at the file limit.
+UPLOAD_MULTIPART_OVERHEAD_BYTES = 1024 * 1024  # 1 MiB allowance for multipart framing/headers/config
+
+
+def _init_max_upload_request_bytes() -> int:
+    raw = os.environ.get("SKYRIM_MAX_UPLOAD_REQUEST_BYTES")
+    if not raw:
+        return MAX_UPLOAD_BYTES + UPLOAD_MULTIPART_OVERHEAD_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "SKYRIM_MAX_UPLOAD_REQUEST_BYTES=%r no es un entero válido; usando MAX_UPLOAD_BYTES + overhead",
+            raw,
+        )
+        return MAX_UPLOAD_BYTES + UPLOAD_MULTIPART_OVERHEAD_BYTES
+    if value <= 0:
+        logger.warning(
+            "SKYRIM_MAX_UPLOAD_REQUEST_BYTES=%d debe ser positivo; usando MAX_UPLOAD_BYTES + overhead",
+            value,
+        )
+        return MAX_UPLOAD_BYTES + UPLOAD_MULTIPART_OVERHEAD_BYTES
+    return value
+
+
+MAX_UPLOAD_REQUEST_BYTES = _init_max_upload_request_bytes()
+
+
+def _parse_content_length(headers) -> int | None:
+    """Returns the first valid Content-Length header value, or None.
+
+    Content-Length is only ever an early-rejection optimization, never the
+    authoritative boundary, so ambiguous/duplicate/invalid values safely fall
+    back to streaming byte counting.
+    """
+    try:
+        values = [v.strip() for k, v in headers if k.lower() == b"content-length"]
+    except AttributeError:
+        return None
+    if not values:
+        return None
+    try:
+        value = int(values[0])
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+async def _send_upload_too_large(send, limit: int) -> None:
+    body = json.dumps({"detail": f"El request supera el tamaño máximo permitido de {limit} bytes."}).encode("utf-8")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+class UploadRequestSizeLimitMiddleware:
+    """Pure ASGI request-body boundary scoped to POST /api/upload.
+
+    Enforces the total request budget BEFORE the server framework parses
+    multipart content. Content-Length provides early rejection; actual ASGI
+    http.request bytes are the authoritative count, so chunked or header-less
+    bodies are bounded identically. On overflow the endpoint never executes.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or scope.get("method") != "POST" or scope.get("path") != "/api/upload":
+            await self.app(scope, receive, send)
+            return
+
+        limit = MAX_UPLOAD_REQUEST_BYTES
+        content_length = _parse_content_length(scope.get("headers", []))
+        if content_length is not None and content_length > limit:
+            await _send_upload_too_large(send, limit)
+            return
+
+        received = 0
+
+        async def guarded_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    # HTTPException is re-raised untouched by FastAPI's body parsing
+                    # (fastapi/routing.py), so the client receives a genuine 413
+                    # instead of a generic 400 parse error.
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"El request supera el tamaño máximo permitido de {limit} bytes.",
+                    )
+            return message
+
+        await self.app(scope, guarded_receive, send)
+
+
+app.add_middleware(UploadRequestSizeLimitMiddleware)
+
+# Register CORS after UploadRequestSizeLimitMiddleware so CORSMiddleware wraps
+# the upload-size middleware. This guarantees that an early-413 response
+# (Content-Length exceeding the request budget) carries the configured
+# Access-Control-Allow-Origin header for allowed cross-origin clients.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 AVAILABLE_VOICES = [
     {"id": "es-ES-AlvaroNeural", "name": "Álvaro (Español España - Masculino)", "lang": "es-ES"},
@@ -224,7 +396,11 @@ async def upload_json(file: UploadFile = File(...), config: str | None = Form(No
 
     safe_name = _sanitize_name(file.filename or "upload.dat")
     file_path = upload_dir / safe_name
-    await asyncio.to_thread(_save_upload_file, file, file_path)
+    try:
+        await asyncio.to_thread(_save_upload_file, file, file_path, MAX_UPLOAD_BYTES)
+    except HTTPException:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
 
     cfg = {}
     transient_api_key = None
