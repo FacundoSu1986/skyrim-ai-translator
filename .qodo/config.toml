@@ -1,7 +1,8 @@
 [config]
-model = "deepseek/deepseek-v4-flash"
-fallback_models = ["deepseek/deepseek-v4-pro"]
+model = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+fallback_models = ["openrouter/minimax/minimax-m3:free", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"]
 max_model_tokens = 200000
+custom_model_max_tokens = 200000
 propagate_tool_errors = true
 response_language = "es-ES"
 repo_context_files = ["AGENTS.md", ".github/coding_conventions.md"]
