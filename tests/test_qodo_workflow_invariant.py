@@ -1,19 +1,19 @@
 """Ancla de invariantes de seguridad y gobernanza de workflows de Qodo / PR-Agent.
 
-Por qu? existe:
+Por qué existe:
 Garantiza que todas las invocaciones de Codium-ai/pr-agent dentro de
-.github/workflows/*.yml est?n expl?citamente inventariadas y congeladas
+.github/workflows/*.yml estén explícitamente inventariadas y congeladas
 en:
 1. Recetas de routing OpenRouter y tokens personalizados.
 2. Pinning exacto de Action por commit SHA.
 3. Bloqueo fail-closed de repositorios privados.
-4. Restricci?n de PRs internos y bloqueo de forks (auto-review y comment-command).
-5. Autorizaci?n estricta de comentarios (OWNER/MEMBER/COLLABORATOR y exclusi?n de bots).
-6. Scope m?nimo de secrets (OPENROUTER_API_KEY restringida exclusivamente al step PR-Agent, sin secretos en if).
-7. Correspondencia exacta con la allowlist de modelos de la pol?tica de datos.
+4. Restricción de PRs internos y bloqueo de forks (auto-review y comment-command).
+5. Autorización estricta de comentarios (OWNER/MEMBER/COLLABORATOR y exclusión de bots).
+6. Scope mínimo de secrets (OPENROUTER_API_KEY restringida exclusivamente al step PR-Agent, sin secretos en if).
+7. Correspondencia exacta con la allowlist de modelos de la política de datos.
 
-Cualquier invocaci?n no inventariada, modificaci?n de gates o exposici?n
-indebida de credenciales romper? este test de forma determinista.
+Cualquier invocación no inventariada, modificación de gates o exposición
+indebida de credenciales romperá este test de forma determinista.
 """
 
 from __future__ import annotations
@@ -72,9 +72,9 @@ def parsear_todos_los_workflows(workflows_dir: Path | None = None) -> dict[str, 
 def descubrir_invocaciones_qodo(
     workflows_dir: Path | None = None,
 ) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """Descubre din?micamente todas las invocaciones de Codium-ai/pr-agent en .github/workflows/*.
+    """Descubre dinámicamente todas las invocaciones de Codium-ai/pr-agent en .github/workflows/*.
 
-    Normaliza el nombre de la Action de forma case-insensitive (owner/repo en GitHub no distinguen may?sculas).
+    Normaliza el nombre de la Action de forma case-insensitive (owner/repo en GitHub no distinguen mayúsculas).
     Retorna un diccionario mapeando (workflow_filename, job_id) -> lista de steps encontrados con sus metadatos.
     """
     workflows = parsear_todos_los_workflows(workflows_dir)
@@ -124,18 +124,18 @@ def obtener_modelos_aprobados_politica(policy_path: Path | None = None) -> set[s
     patron_seccion = r"<!--\s*approved-models:start\s*-->(.*?)<!--\s*approved-models:end\s*-->"
     coincidencia = re.search(patron_seccion, contenido, re.DOTALL)
     assert coincidencia is not None, (
-        f"No se encontr? el bloque delimitado <!-- approved-models:start --> ... "
+        f"No se encontró el bloque delimitado <!-- approved-models:start --> ... "
         f"<!-- approved-models:end --> en {archivo.name}"
     )
 
     bloque = coincidencia.group(1)
     modelos = set(re.findall(r"`(openrouter/[^`]+)`", bloque))
-    assert len(modelos) > 0, f"No se extrajo ning?n modelo aprobado del bloque en {archivo.name}"
+    assert len(modelos) > 0, f"No se extrajo ningún modelo aprobado del bloque en {archivo.name}"
     return modelos
 
 
 def test_conjunto_de_invocaciones_qodo_es_exacto() -> None:
-    """Verifica que el conjunto de jobs coincida exactamente y que cada uno tenga exactamente una invocaci?n."""
+    """Verifica que el conjunto de jobs coincida exactamente y que cada uno tenga exactamente una invocación."""
     descubiertas = descubrir_invocaciones_qodo()
     conjunto_descubierto = set(descubiertas.keys())
     conjunto_esperado = set(RECETAS_ESPERADAS.keys())
@@ -153,21 +153,21 @@ def test_conjunto_de_invocaciones_qodo_es_exacto() -> None:
 
 
 def test_gate_repositorio_publico_en_todos_los_jobs() -> None:
-    """Verifica que cada job que invoque Qodo tenga el gate expl?cito fail-closed github.event.repository.private == false."""
+    """Verifica que cada job que invoque Qodo tenga el gate explícito fail-closed github.event.repository.private == false."""
     descubiertas = descubrir_invocaciones_qodo()
 
     for (archivo, job_id), steps in descubiertas.items():
         for idx, step_metadata in enumerate(steps):
             job_if = step_metadata.get("job_if", "")
             assert "github.event.repository.private == false" in job_if, (
-                f"El job {archivo} / {job_id} (step {idx}) no incluye la condici?n fail-closed "
-                f"'github.event.repository.private == false' en su cl?usula if.\n"
-                f"Cl?usula if actual: {job_if!r}"
+                f"El job {archivo} / {job_id} (step {idx}) no incluye la condición fail-closed "
+                f"'github.event.repository.private == false' en su cláusula if.\n"
+                f"Cláusula if actual: {job_if!r}"
             )
 
 
 def test_pinning_de_accion_qodo_es_exacto() -> None:
-    """Verifica que cada invocaci?n use exactamente el SHA fijado y el repo can?nico de Codium-ai/pr-agent."""
+    """Verifica que cada invocación use exactamente el SHA fijado y el repo canónico de Codium-ai/pr-agent."""
     descubiertas = descubrir_invocaciones_qodo()
     for (archivo, job_id), steps in descubiertas.items():
         for idx, step_metadata in enumerate(steps):
@@ -182,7 +182,7 @@ def test_pinning_de_accion_qodo_es_exacto() -> None:
 
 
 def test_restricciones_de_seguridad_y_fork_gate() -> None:
-    """Verifica los gates de fork en auto-review y autorizaci?n estricta de actores en comment-command."""
+    """Verifica los gates de fork en auto-review y autorización estricta de actores en comment-command."""
     workflows = parsear_todos_los_workflows()
     assert "qodo-merge-adversarial.yml" in workflows, "Falta qodo-merge-adversarial.yml"
     jobs = workflows["qodo-merge-adversarial.yml"].get("jobs", {})
@@ -191,18 +191,18 @@ def test_restricciones_de_seguridad_y_fork_gate() -> None:
     auto_review = jobs.get("auto-review", {})
     auto_if = str(auto_review.get("if", ""))
     assert "github.event.pull_request.head.repo.full_name == github.repository" in auto_if, (
-        f"auto-review no contiene la validaci?n estricta de PR interno contra forks: {auto_if!r}"
+        f"auto-review no contiene la validación estricta de PR interno contra forks: {auto_if!r}"
     )
 
-    # 2. comment-command: autorizaci?n y exclusi?n de bots
+    # 2. comment-command: autorización y exclusión de bots
     comment_cmd = jobs.get("comment-command", {})
     cmd_if = str(comment_cmd.get("if", ""))
     assert "github.event.comment.user.type != 'Bot'" in cmd_if, (
-        f"comment-command no excluye bots en su cl?usula if: {cmd_if!r}"
+        f"comment-command no excluye bots en su cláusula if: {cmd_if!r}"
     )
     for role in ("OWNER", "MEMBER", "COLLABORATOR"):
         assert f"github.event.comment.author_association == '{role}'" in cmd_if, (
-            f"comment-command no restringe ejecuci?n a '{role}': {cmd_if!r}"
+            f"comment-command no restringe ejecución a '{role}': {cmd_if!r}"
         )
 
     # 3. comment-command: fork gate step
@@ -213,25 +213,25 @@ def test_restricciones_de_seguridad_y_fork_gate() -> None:
         if "headRepositoryOwner" in run_script and "HEAD_REPO" in run_script:
             fork_check_encontrado = True
             break
-    assert fork_check_encontrado, "comment-command no contiene el paso de verificaci?n de forks antes de PR-Agent"
+    assert fork_check_encontrado, "comment-command no contiene el paso de verificación de forks antes de PR-Agent"
 
 
 def test_scope_minimo_de_secrets_openrouter() -> None:
-    """Verifica que OPENROUTER_API_KEY y OPENROUTER__KEY no existan a nivel job, no se usen en if, y solo est?n en el step PR-Agent."""
+    """Verifica que OPENROUTER_API_KEY y OPENROUTER__KEY no existan a nivel job, no se usen en if, y solo estén en el step PR-Agent."""
     workflows = parsear_todos_los_workflows()
 
     for archivo_nombre, data in workflows.items():
         jobs = data.get("jobs", {})
         for job_id, job_data in jobs.items():
-            # Aserci?n 1: Ning?n job define variables directas de OpenRouter a nivel job
+            # Aserción 1: Ningún job define variables directas de OpenRouter a nivel job
             job_env = job_data.get("env", {})
             if isinstance(job_env, dict):
                 for secret_key in ("OPENROUTER_API_KEY", "OPENROUTER__KEY"):
                     assert secret_key not in job_env, (
-                        f"Violaci?n de least-privilege: '{secret_key}' expuesta a nivel de job en {archivo_nombre} / {job_id}"
+                        f"Violación de least-privilege: '{secret_key}' expuesta a nivel de job en {archivo_nombre} / {job_id}"
                     )
 
-            # Aserci?n 2: Ning?n if de job ni de step usa el contexto secrets directamente (invalido en GitHub Actions runner)
+            # Aserción 2: Ningún if de job ni de step usa el contexto secrets directamente (invalido en GitHub Actions runner)
             job_if = str(job_data.get("if", ""))
             assert "secrets." not in job_if, (
                 f"Contexto 'secrets' no permitido en job.if en {archivo_nombre} / {job_id}: {job_if!r}"
@@ -244,7 +244,7 @@ def test_scope_minimo_de_secrets_openrouter() -> None:
                     f"Contexto 'secrets' no permitido en step.if (step {idx}) en {archivo_nombre} / {job_id}: {step_if!r}"
                 )
 
-                # Aserci?n 3: Los steps que NO invocan PR-Agent no reciben variables de OpenRouter
+                # Aserción 3: Los steps que NO invocan PR-Agent no reciben variables de OpenRouter
                 uses = str(step.get("uses", "")).strip()
                 action_repo, _, _ = uses.partition("@")
                 step_env = step.get("env", {})
@@ -255,19 +255,19 @@ def test_scope_minimo_de_secrets_openrouter() -> None:
                 if not es_step_pr_agent:
                     for secret_key in ("OPENROUTER_API_KEY", "OPENROUTER__KEY"):
                         assert secret_key not in step_env, (
-                            f"Violaci?n de least-privilege: '{secret_key}' expuesta en step no-PR-Agent "
+                            f"Violación de least-privilege: '{secret_key}' expuesta en step no-PR-Agent "
                             f"(step {idx}: {step.get('name', '')!r}) en {archivo_nombre} / {job_id}"
                         )
 
 
 def test_receta_routing_openrouter_por_invocacion() -> None:
-    """Verifica que cada invocaci?n congele exactamente su receta de routing OpenRouter a nivel de step."""
+    """Verifica que cada invocación congele exactamente su receta de routing OpenRouter a nivel de step."""
     descubiertas = descubrir_invocaciones_qodo()
 
     for (archivo, job_id), receta_esperada in RECETAS_ESPERADAS.items():
-        assert (archivo, job_id) in descubiertas, f"Falta invocaci?n {archivo} / {job_id}"
+        assert (archivo, job_id) in descubiertas, f"Falta invocación {archivo} / {job_id}"
         steps = descubiertas[(archivo, job_id)]
-        assert len(steps) == 1, f"M?ltiples steps en {archivo} / {job_id}"
+        assert len(steps) == 1, f"Múltiples steps en {archivo} / {job_id}"
         env = steps[0]["env"]
 
         routing_actual = {k: str(env.get(k, "")) for k in CLAVES_ROUTING}
@@ -280,7 +280,7 @@ def test_receta_routing_openrouter_por_invocacion() -> None:
 
 
 def test_modelos_configurados_coinciden_con_allowlist_de_politica() -> None:
-    """Verifica que el conjunto de todos los modelos (primarios y fallbacks) coincida exactamente con la allowlist de la pol?tica."""
+    """Verifica que el conjunto de todos los modelos (primarios y fallbacks) coincida exactamente con la allowlist de la política."""
     descubiertas = descubrir_invocaciones_qodo()
     modelos_aprobados = obtener_modelos_aprobados_politica()
 
@@ -306,6 +306,6 @@ def test_modelos_configurados_coinciden_con_allowlist_de_politica() -> None:
 
     assert modelos_configurados == modelos_aprobados, (
         f"Discrepancia entre modelos configurados en workflows y allowlist en AI_REVIEW_DATA_POLICY.md.\n"
-        f"No aprobados en pol?tica pero configurados en workflows: {modelos_configurados - modelos_aprobados}\n"
-        f"Aprobados en pol?tica pero no configurados en workflows:  {modelos_aprobados - modelos_configurados}"
+        f"No aprobados en política pero configurados en workflows: {modelos_configurados - modelos_aprobados}\n"
+        f"Aprobados en política pero no configurados en workflows:  {modelos_aprobados - modelos_configurados}"
     )

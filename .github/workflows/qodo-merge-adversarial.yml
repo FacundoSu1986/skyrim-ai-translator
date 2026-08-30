@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   auto-review:
-    name: "Auto-revisi?n en PR interno"
+    name: "Auto-revisión en PR interno"
     if: >-
       github.event.repository.private == false &&
       github.event_name == 'pull_request' &&
@@ -40,7 +40,7 @@ jobs:
         uses: Codium-ai/pr-agent@4ebd5c5333c6ef21509e7304d27969eb825e6f22 # v0.43.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Data policy: .github/AI_REVIEW_DATA_POLICY.md ? solo datos p?blicos; revisar proveedores antes de cambiar modelos.
+          # Data policy: .github/AI_REVIEW_DATA_POLICY.md — solo datos públicos; revisar proveedores antes de cambiar modelos.
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER__KEY: ${{ secrets.OPENROUTER_API_KEY }}
           CONFIG.MODEL: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
@@ -79,7 +79,7 @@ jobs:
           body="${COMMENT_BODY//$'\r'/}"
 
           deny() {
-            echo "gate: rechazado ? $1" >&2
+            echo "gate: rechazado — $1" >&2
             echo "run=false" >> "$GITHUB_OUTPUT"
             exit 0
           }
@@ -88,23 +88,23 @@ jobs:
           first_line="${first_line#"${first_line%%[![:space:]]*}"}"
           first_line="${first_line%"${first_line##*[![:space:]]}"}"
 
-          # Ninguna l?nea del comentario puede contener un flag "--..." para evitar overrides arbitrarios
+          # Ninguna línea del comentario puede contener un flag "--..." para evitar overrides arbitrarios
           while IFS= read -r line; do
             case "$line" in
-              *--*) deny "argumentos '--clave=valor' no permitidos (override de configuraci?n)" ;;
+              *--*) deny "argumentos '--clave=valor' no permitidos (override de configuración)" ;;
             esac
           done <<< "$body"
 
           case "$first_line" in
             /review|/describe)
-              # Sin argumentos: exigir que sea la ?nica l?nea con contenido real
+              # Sin argumentos: exigir que sea la única línea con contenido real
               extra="$(printf '%s\n' "$body" | grep -c '[^[:space:]]' || true)"
               if [ "$extra" -ne 1 ]; then
-                deny "$first_line debe ser la ?nica l?nea del comentario"
+                deny "$first_line debe ser la única línea del comentario"
               fi
               ;;
             "/ask "*)
-              # /ask admite preguntas multil?nea
+              # /ask admite preguntas multilínea
               ;;
             *)
               deny "comando no permitido"
@@ -126,7 +126,7 @@ jobs:
             --json headRepositoryOwner,headRepository \
             --jq '.headRepositoryOwner.login + "/" + .headRepository.name')"
           if [[ "$HEAD_REPO" != "$REPO" ]]; then
-            echo "PR desde fork ($HEAD_REPO): revisi?n por comentario deshabilitada." >&2
+            echo "PR desde fork ($HEAD_REPO): revisión por comentario deshabilitada." >&2
             exit 1
           fi
 
@@ -135,7 +135,7 @@ jobs:
         uses: Codium-ai/pr-agent@4ebd5c5333c6ef21509e7304d27969eb825e6f22 # v0.43.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Data policy: .github/AI_REVIEW_DATA_POLICY.md ? solo datos p?blicos; revisar proveedores antes de cambiar modelos.
+          # Data policy: .github/AI_REVIEW_DATA_POLICY.md — solo datos públicos; revisar proveedores antes de cambiar modelos.
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER__KEY: ${{ secrets.OPENROUTER_API_KEY }}
           CONFIG.MODEL: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
