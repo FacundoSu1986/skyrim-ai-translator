@@ -29,7 +29,12 @@ date: 2026-08-29
   - agent file-scan found NO loose FUZ `da01__000a2c45_1.fuz` anywhere in
     MO2\mods, MO2\overwrite, MO2\profiles, MO2\downloads, or
     Skyrim\Data\Sound\Voice\Skyrim.esm\MaleElfHaughty\
-  - control A therefore uses exclusively the vanilla BSA asset
+  - CUSTOM_VOICE_OVERRIDE_ABSENT = PASS means ONLY: no loose target FUZ was
+    found in the scanned paths, and no enabled voice-replacement mod was
+    identified (modlist.txt above). It does NOT prove which BSA Skyrim
+    selected at runtime, and the exact bytes/source archive were NOT traced.
+  - The exact archive/file selected by Skyrim at runtime was not independently
+    traced in this validation.
 
 ## Identity (STRUCTURAL PROOF — finder / PR #30)
 
@@ -72,9 +77,13 @@ date: 2026-08-29
 
 VANILLA_RUNTIME_CONTROL_PASS
 
-- Nelacar reference (BaseID 0001E7D5) + DIAL 000A2C23 + vanilla BSA asset
-  -> runtime playback works: vanilla audio audible in two independent,
-  controlled runs.
+- Nelacar runtime reference (BaseID 0001E7D5 verified) + DIAL 000A2C23
+  -> audible runtime playback observed in two independent, controlled runs.
+- Provenance qualifiers (evidence-safe):
+  - the operator reported the heard audio as vanilla;
+  - no loose override was found in the scanned paths, and no enabled
+    voice-replacement mod was identified;
+  - the exact runtime source archive was not independently traced.
 - This does NOT prove: custom FUZ generation, Spanish audio, LIP correctness,
   or production integration.
 
