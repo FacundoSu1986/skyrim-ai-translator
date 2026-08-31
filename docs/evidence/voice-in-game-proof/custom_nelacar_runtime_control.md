@@ -51,11 +51,14 @@ Machine-verifiable vs human-observed:
 - WAV: nelacar_spanish.wav — PCM, mono, 16-bit, 44100 Hz, 6.339 s, peak 23916 (non-silent)
   SHA-256: 79D7AA0471FDD2983C91384FCDC20D0E680C55F90D505ACB6BC6D15C552D9179
   (sample rate assumption documented: 44100 Hz canonical xWMAEncode input; not previously recorded)
-- LIP: nelacar_spanish.lip — real LipGenerator -Language:Spanish (isolated CWD; tmp16khz.wav observed)
-  size 8033 B; SHA-256: 8CEA494660E0C7891EDB17225241E91FDD7C68D6CCE4548693FF689C94C30E56
-- XWM: nelacar_spanish.xwm — real xWMAEncode -b 48000 (help-derived invocation)
-  size 44734 B; header RIFF....XWMAfmt (genuine xWMA container)
-  SHA-256: 1A37C83206D8E22946B043BF110F59911213255E2F88F5F8A6C8A3B14F581616
+- LIP: nelacar_spanish.lip — generated via `LipGenerator.exe -Language:Spanish <wav_file> <text>`
+  (tool: `Tools\LipGen\LipGenerator\LipGenerator.exe`, executed in isolated CWD; exit code: 0; `tmp16khz.wav` observed during run).
+  Input: `nelacar_spanish.wav` (SHA-256: 79D7AA0471FDD2983C91384FCDC20D0E680C55F90D505ACB6BC6D15C552D9179)
+  Output: `nelacar_spanish.lip` (size 8033 B; SHA-256: 8CEA494660E0C7891EDB17225241E91FDD7C68D6CCE4548693FF689C94C30E56)
+- XWM: nelacar_spanish.xwm — generated via `xwmaencode.exe nelacar_spanish.wav nelacar_spanish.xwm -b 48000`
+  (tool: `Tools\Audio\xwmaencode.exe`; exit code: 0; header `RIFF....XWMAfmt`).
+  Input: `nelacar_spanish.wav` (SHA-256: 79D7AA0471FDD2983C91384FCDC20D0E680C55F90D505ACB6BC6D15C552D9179)
+  Output: `nelacar_spanish.xwm` (size 44734 B; genuine xWMA container; SHA-256: 1A37C83206D8E22946B043BF110F59911213255E2F88F5F8A6C8A3B14F581616)
 - FUZ: da01__000a2c45_1.fuz — built with repo src.voice_assets.pack_fuz;
   FUZE magic + version 1 + lip_len + lip + xwm; size 52779 B (= 12 + 8033 + 44734)
   SHA-256: 6DF84A94F843B89C520D7EC64E4ED274FF246EAD7529F996AB453B9BAF9A8F65
@@ -76,7 +79,7 @@ Machine-verifiable vs human-observed:
 
 | Tool | Path | SHA-256 | Version |
 |---|---|---|---|
-| LipGenerator.exe | G:\SteamLibrary\steamapps\common\Skyrim Special Edition\Tools\LipGen\LipGenerator\LipGenerator.exe | 59053B83014C2A8152E7BEC0B7670683637DF723D75BF50F970A13281B14B619 | 1.0.0.1 |
+| LipGenerator.exe | G:\SteamLibrary\steamapps\common\Skyrim Special Edition\Tools\LipGen\LipGenerator\LipGenerator.exe | 59053B83014C2A8152E7BEC0B7670683637DF723D75BF50F970A13281B14B619 | 1.0.0.2 |
 | FonixData.cdf | G:\SteamLibrary\steamapps\common\Skyrim Special Edition\Tools\LipGen\LipGenerator\FonixData.cdf | F9EDCECF534F1C1BF187EE5EBF62B2856C574AF441F1A6B83A7FB639C6D27974 | — |
 | xWMAEncode.exe | G:\SteamLibrary\steamapps\common\Skyrim Special Edition\Tools\Audio\xwmaencode.exe | 3FD5D07F720F8A15386BC0EF4771F8D38B6E1567FC5E342187D8DC08FF92738D | 9.28.1876.0 (DX SDK Feb 2010) |
 | LIPFuzer.exe (reference, unused) | G:\SteamLibrary\steamapps\common\Skyrim Special Edition\Tools\LipGen\LipFuzer\LIPFuzer.exe | 1F9D00F8A29E81DADD56E63AD917A44FD6AB975E4D39E383A6E66D802F37A181 | 1.0.0.0 |
@@ -87,8 +90,10 @@ Note: an earlier operator-reported run (custom HEARD ×2) is SUPERSEDED. USVFS l
 analysis (usvfs-2026-08-30_21-20-01.log) showed that session also injected
 G:\Modding\Skyrim_Stock_1.6.1170\SkyrimSE.exe and the Runtime launcher; the MO2
 instance's gamePath is the Runtime copy, and the Stock copy cannot see USVFS
-mounts. A later user run on the Stock copy heard VANILLA audio, proving the
-initial report unreliable under that environment ambiguity.
+mounts. A later user run on the Stock copy heard VANILLA audio, confirming that
+the Stock copy reproduces vanilla audio and demonstrating that process attribution
+for the earlier session was ambiguous/invalid due to multiple injected processes
+(without asserting whether the Runtime session produced custom audio).
 
 Verified rerun (user-observed; environment verified from USVFS log
 usvfs-2026-08-30_22-10-41.log: single injected PID 2748 =
@@ -123,14 +128,11 @@ G:\Modding\Skyrim_Runtime_1.6.1170\SkyrimSE.exe; zero Stock/launcher processes):
   binary in Git.
 - The video is complementary human evidence and does not replace the written
   operator declaration above.
-- Compressed derivative for GitHub attachment: PENDING. When the operator attaches
-  the derivative to this evidence PR, its URL + SHA-256 will be recorded here —
-  NEVER replacing the original hash, never bundling binary content in Git.
 
 ## Conclusion gates
 
 VANILLA_RUNTIME_CONTROL_PASS (reference baseline, PR #33)
-CUSTOM_FUZ_RUNTIME_AUDIO_PROOF = PASS (2 verified-environment base runs)
+CUSTOM_FUZ_RUNTIME_AUDIO_PROOF = PASS (1 verified-environment base run)
 CUSTOM_FUZ_RUNTIME_LIPSYNC_PROOF = PASS (user-observed sync)
 SPIKE_IN_GAME_PROOF = PASS
 
