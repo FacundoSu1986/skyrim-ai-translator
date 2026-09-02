@@ -24,7 +24,7 @@
 - [`skyrim_voice_asset_spike.md`](skyrim_voice_asset_spike.md): evidencia técnica
   fechada sobre assets de voz.
 - [`reports/`](reports/): reportes de tareas y auditorías.
-- [`superpowers/specs/`](superpowers/specs/): especificaciones/planes.
+- [`design/specs/`](design/specs/): especificaciones y diseños técnicos.
 
 Estos documentos pueden explicar **por qué** se tomó una decisión o qué se
 investigó, pero no superan al runtime y tests actuales como fuente de
