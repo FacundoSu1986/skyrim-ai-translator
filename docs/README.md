@@ -25,6 +25,7 @@
   fechada sobre assets de voz.
 - [`reports/`](reports/): reportes de tareas y auditorías.
 - [`design/specs/`](design/specs/): especificaciones y diseños técnicos.
+- [`design/research/`](design/research/): síntesis de investigación, hipótesis y checkpoints técnicos todavía no elevados a especificaciones.
 
 Estos documentos pueden explicar **por qué** se tomó una decisión o qué se
 investigó, pero no superan al runtime y tests actuales como fuente de
