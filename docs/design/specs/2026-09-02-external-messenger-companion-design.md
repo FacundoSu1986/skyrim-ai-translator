@@ -68,7 +68,8 @@ controlled NPC
 
 The external transport must not directly control Skyrim, the operating system, an AI agent, or a shell.
 
-The Skyrim-facing component should receive only a minimal validated message contract.
+The Skyrim-facing component should receive only a minimal validated message contract. Local bridge IPC between sidecar and Skyrim must be restricted to the active OS user session and verify sidecar origin; the exact IPC protocol and producer verification mechanics belong to the POC-001 investigation.
+
 
 ## 4. Initial transport
 
@@ -119,7 +120,8 @@ Future POCs and runtime implementations must enforce the following delivery sema
    These two states must never be conflated.
 
 6. **Reply Correlation:**
-   Any outbound companion reply (such as POC-003 fixed canned responses) MUST explicitly reference the originating `message_id` / `correlation_id`. Uncorrelated replies are invalid.
+   Any outbound companion reply (such as POC-003 fixed canned responses) MUST explicitly reference the originating `message_id` (used as the default `correlation_id` when an explicit one is absent). Dialogue reply options correlate to the active or most recently delivered in-game message envelope. Uncorrelated replies are invalid.
+
 
 
 ## 6. Security invariants
@@ -142,11 +144,12 @@ Any implementation must preserve all of the following:
    - `sender_id` MUST NEVER be extracted from message body text, unauthenticated headers, or user-controlled payload fields.
    - Any message lacking transport-level proof of identity or failing allow-list matching MUST be rejected immediately (fail closed) with an observable audit record.
 
-4. **Authentication Credentials and Local Secrets:**
+4. **Authentication Credentials, Local Secrets, and Audit Logging:**
    - Secrets (such as bot tokens or API keys) MUST never be committed to Git, never printed in plaintext in logs or crash traces (mandatory redaction), and never embedded into generated mod plugins or archives.
    - Storage MUST use local, protected mechanisms: OS credential stores or user-profile-isolated configuration files with strict access controls (e.g. POSIX `0600` or Windows ACLs restricted exclusively to the active user profile). World-readable files or storage accessible by unrelated local processes are forbidden.
    - Implementations must support manual rotation and revocation.
    - If credentials are missing, invalid, or revoked, external messaging MUST fail closed: the transport remains shut down and no messages are accepted.
+   - Audit logs MUST record only operational metadata (UTC timestamps, normalized sender IDs, delivery lifecycle events); raw message text (`MessageEnvelope.text`) MUST NOT be logged by default. Audit logs must follow the same user-restricted ACLs and bounded retention window.
    - Note: No specific storage backend or library is mandated at this design stage; any chosen mechanism must satisfy these access-control and redaction invariants.
 
 5. **Verifiable Bounds and Degradation:**
@@ -165,9 +168,10 @@ Any implementation must preserve all of the following:
    - Requiring explicit user opt-in before opening network ports, connecting to messaging providers, or accepting incoming messages.
    - When the feature is disabled or revoked by the user, active transport connections MUST terminate immediately, and any un-delivered pending messages in the queue MUST be cleared/purged immediately; pending messages MUST NOT linger or be delivered upon subsequent re-enablement.
 
-8. **Queue Retention and Storage Policy:**
+8. **Queue Retention, Storage, and Deduplication Policy:**
    - In-memory queueing is the default architectural posture: if the application, sidecar, or game shuts down or restarts, queued in-flight messages are dropped (fail-closed) and an observable restart log is emitted.
-   - If persistent queueing is ever evaluated in future work, it MUST use encrypted-at-rest storage with user-restricted ACLs, enforce mandatory per-message expiration, and ensure guaranteed deletion immediately after delivery or revocation.
+   - If persistent queueing is ever evaluated in future work, it MUST use encrypted-at-rest storage with user-restricted ACLs, enforce mandatory per-message expiration, and ensure guaranteed deletion of message text immediately after delivery or revocation.
+   - Deduplication state (a bounded record of recent `(transport_identity, message_id)` keys) MUST be decoupled from message text payload storage: tombstones persist only for a bounded TTL covering the transport replay window to prevent re-delivery after text payload deletion.
 
 9. Skyrim master files and BSAs remain read-only.
 
@@ -252,8 +256,8 @@ allow-listed sender
   - Messages from unauthorized/unauthenticated accounts are rejected with observable security log.
   - Messages with forged sender metadata or invalid payload structure are dropped fail-closed.
   - Network disconnection or transport failure enters an observable degraded state without crashing the local sidecar or Skyrim bridge.
-- **Evidence Artifact:** Sidecar audit log documenting ingress timestamp, sender normalization, authentication pass/fail decision, deduplication check, and local queue staging.
-- **Authorization Criteria (PASS):** 100% of allow-listed test messages are delivered to companion; 0% of unauthorized or forged messages reach the local delivery queue; zero credentials exposed in logs.
+- **Evidence Artifact:** Sidecar audit log (recording ingress timestamp, sender normalization, authentication pass/fail decision, deduplication check, and queue staging) coupled with the POC-001 in-game delivery receipt/log proving `delivered-in-game` completion.
+- **Authorization Criteria (PASS):** 100% of allow-listed test messages reach `delivered-in-game` status; 0% of unauthorized or forged messages reach the local delivery queue; zero credentials exposed in logs.
 
 ### POC-003 — Optional reply
 
